@@ -140,6 +140,16 @@ impl Environment {
         }
     }
 
+    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, mut func: F) {
+        let b = self.env.borrow();
+        for v in b.vars() {
+            func(v.0, v.1);
+        }
+        if let Some(p) = self.get_parent() {
+            p.for_each_var(func);
+        }
+    }
+
     /// Get the object of type `obj_type`, and create it if none exists
     /// Get the object of type `obj_type`, and create it if none exists
     pub fn add_type_value(&self, obj: &str, attr: &str, value: Value) {
@@ -262,6 +272,10 @@ impl EnvironmentContent {
             self.variables.insert(name.to_string(), value);
             Ok(())
         }
+    }
+
+    pub fn vars(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.variables.iter()
     }
 
     /// Get the value of the variable `name`

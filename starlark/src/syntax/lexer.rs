@@ -731,11 +731,12 @@ impl Lexer {
                     }
                     '\n' => {
                         self.pop();
-                        if triple {
-                            Ok(None)
+                        // if triple {
+                        Ok(None)
+                        /*
                         } else {
                             Err(LexerError::InvalidEscapeSequence(pos, pos2 + 1))
-                        }
+                        }*/
                     }
                     'u' => {
                         self.pop();

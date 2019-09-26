@@ -102,6 +102,10 @@ impl List {
 impl TypedValue for List {
     type Holder = Mutable<List>;
 
+    fn clone_mut(&self) -> Value {
+        self.clone().new_value()
+    }
+
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {
@@ -126,6 +130,21 @@ impl TypedValue for List {
             self.content
                 .iter()
                 .map(Value::to_repr)
+                .enumerate()
+                .fold("".to_string(), |accum, s| if s.0 == 0 {
+                    accum + &s.1
+                } else {
+                    accum + ", " + &s.1
+                },)
+        )
+    }
+
+    fn to_json(&self) -> String {
+        format!(
+            "[{}]",
+            self.content
+                .iter()
+                .map(Value::to_json)
                 .enumerate()
                 .fold("".to_string(), |accum, s| if s.0 == 0 {
                     accum + &s.1
@@ -245,6 +264,11 @@ impl TypedValue for List {
             result.content.push(x.clone());
         }
         Ok(result)
+    }
+
+    fn add_assign(&mut self, other: &List) -> Result<(), ValueError> {
+        self.content.extend(other.content.iter().cloned());
+        Ok(())
     }
 
     /// Repeat `other` times this tuple.

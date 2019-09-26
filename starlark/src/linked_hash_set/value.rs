@@ -118,6 +118,11 @@ impl From<Set> for Value {
 impl TypedValue for Set {
     type Holder = Mutable<Set>;
 
+
+    fn clone_mut(&self) -> Value {
+        Value::new(self.clone())
+    }
+
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {

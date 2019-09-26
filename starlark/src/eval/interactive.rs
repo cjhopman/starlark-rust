@@ -22,12 +22,13 @@ use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
 use std::sync::{Arc, Mutex};
 
 pub struct EvalError {
-    codemap: Arc<Mutex<CodeMap>>,
-    diagnostic: Diagnostic,
+    pub codemap: Arc<Mutex<CodeMap>>,
+    pub diagnostic: Diagnostic,
 }
 
 impl EvalError {
     pub fn write_to_stderr(self) {
+        println!("{:?}", self.diagnostic);
         Emitter::stderr(ColorConfig::Auto, Some(&self.codemap.lock().unwrap()))
             .emit(&[self.diagnostic])
     }

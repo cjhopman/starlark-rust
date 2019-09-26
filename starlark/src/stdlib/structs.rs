@@ -20,11 +20,27 @@ use linked_hash_map::LinkedHashMap;
 
 /// `struct()` implementation.
 pub struct StarlarkStruct {
-    fields: LinkedHashMap<String, Value>,
+    pub fields: LinkedHashMap<String, Value>,
 }
 
 impl TypedValue for StarlarkStruct {
     type Holder = Immutable<StarlarkStruct>;
+
+    fn clone_mut(&self) -> Value {
+        panic!()
+    }
+
+    fn to_json(&self) -> String {
+        let mut s = "{".to_string();
+        s += &self
+            .fields
+            .iter()
+            .map(|(k, v)| format!("{}: {}", k, v.to_json()))
+            .collect::<Vec<String>>()
+            .join(", ");
+        s += "}";
+        s
+    }
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
@@ -111,5 +127,10 @@ starlark_module! { global =>
         Ok(Value::new(StarlarkStruct {
             fields: kwargs
         }))
+    }
+
+    struct_.to_json(this) {
+        let this = this.downcast_ref::<StarlarkStruct>().unwrap();
+        Ok(Value::new(this.to_json()))
     }
 }

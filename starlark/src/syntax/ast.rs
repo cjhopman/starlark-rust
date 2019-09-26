@@ -18,6 +18,7 @@ use super::lexer;
 use crate::eval::compr::ComprehensionCompiled;
 use crate::eval::def::DefCompiled;
 use crate::syntax::dialect::Dialect;
+use crate::values::Value;
 use codemap::{Span, Spanned};
 use codemap_diagnostic::{Diagnostic, Level, SpanLabel, SpanStyle};
 use lalrpop_util;
@@ -108,6 +109,30 @@ impl Parameter {
             Parameter::KWArgs(n) => &n.node,
         }
     }
+
+    pub fn compile(param: AstParameter) -> Result<AstParameter, Diagnostic> {
+        match param.node {
+            Parameter::WithDefaultValue(s, expr) => Ok(Spanned{
+                span: param.span,
+                node: Parameter::WithDefaultValue(s, Expr::compile(expr)?)
+            }),
+            _ => Ok(param)
+        }
+    }
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct AstListLiteral {
+
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub enum AstLiteral {
+    IntLiteral(AstInt),
+    StringLiteral(AstString),
+    ListLiteral(AstListLiteral),
 }
 
 #[doc(hidden)]
@@ -127,8 +152,8 @@ pub enum Expr {
     Identifier(AstString),
     // local variable index
     Slot(usize, AstString),
-    IntLiteral(AstInt),
-    StringLiteral(AstString),
+    Literal(AstLiteral),
+    CompiledLiteral(AstLiteral, Value),
     Not(AstExpr),
     Minus(AstExpr),
     Plus(AstExpr),
@@ -145,6 +170,13 @@ pub enum Expr {
 to_ast_trait!(Expr, AstExpr, Box);
 
 impl Expr {
+    pub fn is_literal(&self) -> bool {
+        match self {
+            Expr::Literal(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn check_call(
         f: AstExpr,
         args: Vec<AstArgument>,
@@ -317,7 +349,8 @@ impl Expr {
                     Expr::transform_locals_to_slots(then_expr, locals),
                     Expr::transform_locals_to_slots(else_expr, locals),
                 ),
-                n @ Expr::IntLiteral(..) | n @ Expr::StringLiteral(..) => n,
+                n @ Expr::Literal(..) => n,
+                n @ Expr::CompiledLiteral(..) => n,
                 n @ Expr::DictComprehension(..)
                 | n @ Expr::ListComprehension(..)
                 | n @ Expr::SetComprehension(..)
@@ -330,6 +363,7 @@ impl Expr {
     }
 
     pub(crate) fn compile(expr: AstExpr) -> Result<AstExpr, Diagnostic> {
+        println!("compile {}", expr.node);
         Ok(Box::new(Spanned {
             span: expr.span,
             node: match expr.node {
@@ -339,12 +373,24 @@ impl Expr {
                         .map(Expr::compile)
                         .collect::<Result<_, _>>()?,
                 ),
-                Expr::List(exprs) => Expr::List(
-                    exprs
+                Expr::List(exprs) => {
+                    let items : Vec<_> =  exprs
                         .into_iter()
                         .map(Expr::compile)
-                        .collect::<Result<_, _>>()?,
-                ),
+                        .collect::<Result<_, _>>()?;
+
+                    if items.iter().all(|e| e.is_literal()) {
+                        let vals : Vec<_> = items.iter().map(|e| {
+                            match e.node {
+                                Expr::CompiledLiteral(_, ref v) => v.clone(),
+                                _ => unreachable!()
+                            }
+                        }).collect();
+                        Expr::CompiledLiteral(AstLiteral::ListLiteral(AstListLiteral{}), Value::from(vals))
+                    } else {
+                        Expr::List(items)   
+                    }
+                },
                 Expr::Set(exprs) => Expr::Set(
                     exprs
                         .into_iter()
@@ -400,11 +446,19 @@ impl Expr {
                 Expr::DictComprehension((key, value), clauses) => Expr::ComprehensionCompiled(
                     ComprehensionCompiled::new_dict(key, value, clauses)?,
                 ),
+                Expr::Literal(AstLiteral::StringLiteral(s)) => Expr::CompiledLiteral(
+                    AstLiteral::StringLiteral(s.clone()),
+                    Value::new(s.node)
+                ),
+                Expr::Literal(AstLiteral::IntLiteral(i)) => Expr::CompiledLiteral(
+                    AstLiteral::IntLiteral(i),
+                    Value::new(i.node)
+                ),
+                Expr::Literal(AstLiteral::ListLiteral(_)) => unreachable!(),
+                Expr::CompiledLiteral(..) => unreachable!(),
                 Expr::ComprehensionCompiled(..) => unreachable!(),
                 e @ Expr::Slot(..)
-                | e @ Expr::Identifier(..)
-                | e @ Expr::StringLiteral(..)
-                | e @ Expr::IntLiteral(..) => e,
+                | e @ Expr::Identifier(..) => e,
             },
         }))
     }
@@ -624,10 +678,10 @@ impl Statement {
                 ),
                 Statement::Return(expr) => Statement::Return(expr.map(Expr::compile).transpose()?),
                 Statement::If(cond, then_block) => {
-                    Statement::If(cond, Statement::compile(then_block)?)
+                    Statement::If(Expr::compile(cond)?, Statement::compile(then_block)?)
                 }
-                Statement::IfElse(conf, then_block, else_block) => Statement::IfElse(
-                    conf,
+                Statement::IfElse(cond, then_block, else_block) => Statement::IfElse(
+                    Expr::compile(cond)?,
                     Statement::compile(then_block)?,
                     Statement::compile(else_block)?,
                 ),
@@ -790,7 +844,6 @@ impl Display for Expr {
                 Ok(())
             }
             Expr::Identifier(ref s) | Expr::Slot(_, ref s) => s.node.fmt(f),
-            Expr::IntLiteral(ref i) => i.node.fmt(f),
             Expr::Not(ref e) => write!(f, "(not {})", e.node),
             Expr::Minus(ref e) => write!(f, "-{}", e.node),
             Expr::Plus(ref e) => write!(f, "+{}", e.node),
@@ -829,7 +882,10 @@ impl Display for Expr {
                 f.write_str("}}")
             }
             Expr::ComprehensionCompiled(ref c) => fmt::Display::fmt(&c.to_raw(), f),
-            Expr::StringLiteral(ref s) => fmt_string_literal(f, &s.node),
+            Expr::Literal(AstLiteral::IntLiteral(ref i)) | Expr::CompiledLiteral(AstLiteral::IntLiteral(ref i), _) => i.node.fmt(f),
+            Expr::Literal(AstLiteral::StringLiteral(ref s)) | Expr::CompiledLiteral(AstLiteral::StringLiteral(ref s), _) => fmt_string_literal(f, &s.node),
+            Expr::Literal(AstLiteral::ListLiteral(_)) => panic!("this shouldn't exist"),
+            Expr::CompiledLiteral(AstLiteral::ListLiteral(_), ref v) => v.fmt(f),
         }
     }
 }

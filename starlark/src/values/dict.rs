@@ -128,6 +128,10 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone>
 impl TypedValue for Dictionary {
     type Holder = Mutable<Dictionary>;
 
+    fn clone_mut(&self) -> Value {
+        Value::new(Dictionary{content: self.content.clone()})
+    }
+
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {
@@ -145,6 +149,21 @@ impl TypedValue for Dictionary {
             self.content
                 .iter()
                 .map(|(k, v)| format!("{}: {}", k.get_value().to_repr(), v.to_repr()))
+                .enumerate()
+                .fold("".to_string(), |accum, s| if s.0 == 0 {
+                    accum + &s.1
+                } else {
+                    accum + ", " + &s.1
+                })
+        )
+    }
+
+    fn to_json(&self) -> String {
+        format!(
+            "{{{}}}",
+            self.content
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k.get_value().to_json(), v.to_json()))
                 .enumerate()
                 .fold("".to_string(), |accum, s| if s.0 == 0 {
                     accum + &s.1

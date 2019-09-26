@@ -83,6 +83,10 @@ impl TypedValue for i64 {
     type Holder = Immutable<Self>;
     const TYPE: &'static str = "int";
 
+    fn clone_mut(&self) -> Value {
+        self.clone().new_value()
+    }
+
     fn new_value(self) -> Value {
         Value(ValueInner::Int(ValueHolder::new(self)))
     }
@@ -95,6 +99,9 @@ impl TypedValue for i64 {
     }
     fn to_repr(&self) -> String {
         format!("{}", self)
+    }
+    fn to_json(&self) -> String {
+        self.to_repr()
     }
     fn to_int(&self) -> Result<i64, ValueError> {
         Ok(*self)

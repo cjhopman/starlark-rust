@@ -19,7 +19,7 @@ use crate::eval::call_stack::CallStack;
 use crate::eval::{
     eval_stmt, EvalException, EvaluationContext, EvaluationContextEnvironment, IndexedLocals,
 };
-use crate::syntax::ast::{AstParameter, AstStatement, AstString, Expr, Statement};
+use crate::syntax::ast::{AstParameter, AstStatement, AstString, Expr, Parameter, Statement};
 use crate::values::error::ValueError;
 use crate::values::function::{FunctionParameter, FunctionType};
 use crate::values::none::NoneType;
@@ -56,6 +56,9 @@ impl DefCompiled {
                 .entry(p.name().to_owned())
                 .or_insert(len);
         }
+
+        let params : Result<Vec<_>, _> = params.into_iter().map(|p| Parameter::compile(p)).collect();
+        let params = params?;
 
         DefCompiled::collect_locals(&suite, &mut local_names_to_indices);
 
@@ -176,6 +179,10 @@ impl Def {
 
 impl TypedValue for Def {
     type Holder = Immutable<Def>;
+
+    fn clone_mut(&self) -> Value {
+        panic!()
+    }
 
     const TYPE: &'static str = "function";
 

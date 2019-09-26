@@ -15,13 +15,14 @@
 //! Mutability-related utilities.
 
 use crate::values::ValueError;
-use std::cell::{BorrowError, Cell, Ref, RefCell, RefMut};
+use std::cell::{BorrowError, BorrowMutError, Cell, Ref, RefCell, RefMut};
 use std::fmt;
 use std::ops::Deref;
 
 /// A helper enum for defining the level of mutability of an iterable.
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
 pub enum IterableMutability {
+    Shared,
     Mutable,
     Immutable,
     FrozenForIteration,
@@ -34,6 +35,7 @@ impl IterableMutability {
     /// an error if the current container is no longer mutable.
     pub fn test(self) -> Result<(), ValueError> {
         match self {
+            IterableMutability::Shared => Ok(()),
             IterableMutability::Mutable => Ok(()),
             IterableMutability::Immutable => Err(ValueError::CannotMutateImmutableValue),
             IterableMutability::FrozenForIteration => Err(ValueError::MutationDuringIteration),
@@ -71,13 +73,15 @@ impl<'a, T: ?Sized + 'a> RefOrRef<'a, T> {
 }
 
 /// Container for data which is either `RefCell` or immutable data.
-pub trait RefCellOrImmutable {
+pub trait ContentCell {
     type Content;
 
     fn new(value: Self::Content) -> Self;
     fn borrow(&self) -> RefOrRef<'_, Self::Content>;
     fn try_borrow(&self) -> Result<RefOrRef<Self::Content>, BorrowError>;
     fn borrow_mut(&self) -> RefMut<'_, Self::Content>;
+    fn try_borrow_mut(&self) -> Result<RefMut<'_, Self::Content>, ()>;
+    fn shared(&self) -> Self;
     fn as_ptr(&self) -> *const Self::Content;
 }
 
@@ -85,7 +89,7 @@ pub trait RefCellOrImmutable {
 #[derive(Debug, Clone)]
 pub struct ImmutableCell<T>(T);
 
-impl<T> RefCellOrImmutable for RefCell<T> {
+impl<T> ContentCell for RefCell<T> {
     type Content = T;
 
     fn new(value: T) -> Self {
@@ -104,12 +108,16 @@ impl<T> RefCellOrImmutable for RefCell<T> {
         RefCell::borrow_mut(self)
     }
 
+    fn try_borrow_mut(&self) -> Result<RefMut<Self::Content>, ()> {
+        RefCell::try_borrow_mut(self).map_err(|e| ())
+    }
+
     fn as_ptr(&self) -> *const T {
         RefCell::as_ptr(self)
     }
 }
 
-impl<T> RefCellOrImmutable for ImmutableCell<T> {
+impl<T> ContentCell for ImmutableCell<T> {
     type Content = T;
 
     fn new(value: T) -> Self {
@@ -128,6 +136,10 @@ impl<T> RefCellOrImmutable for ImmutableCell<T> {
         panic!("immutable value cannot be mutably borrowed")
     }
 
+    fn try_borrow_mut(&self) -> Result<RefMut<Self::Content>, ()> {
+        Err(())
+    }
+
     fn as_ptr(&self) -> *const T {
         &self.0 as *const T
     }
@@ -144,6 +156,7 @@ pub trait MutabilityCell: fmt::Debug {
 
 #[derive(Debug, Clone)]
 pub struct ImmutableMutability;
+
 #[derive(Debug)]
 pub struct MutableMutability(Cell<IterableMutability>);
 

@@ -283,7 +283,7 @@ impl<'a> EvaluationContextEnvironment<'a> {
             EvaluationContextEnvironment::Module(_, loader) => loader.clone(),
             _ => {
                 // If we reach here, this is a bug.
-                unreachable!()
+                unreachable!("module required here")
             }
         }
     }
@@ -358,7 +358,7 @@ pub struct EvaluationContext<'a> {
 }
 
 impl<'a> EvaluationContext<'a> {
-    fn new<T: FileLoader>(
+    pub fn new<T: FileLoader>(
         env: Environment,
         type_values: TypeValues,
         loader: T,
@@ -628,6 +628,7 @@ fn transform(
 
 // Evaluate the AST element, i.e. mutate the environment and return an evaluation result
 fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
+    println!("ex {}", expr.node);
     match expr.node {
         Expr::Tuple(ref v) => {
             let r = eval_vector!(v, context);
@@ -646,8 +647,8 @@ fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
         }
         Expr::Identifier(ref i) => t(context.env.get(&i.node), i),
         Expr::Slot(slot, ref i) => t(context.env.get_slot(slot, &i.node), i),
-        Expr::IntLiteral(ref i) => Ok(Value::new(i.node)),
-        Expr::StringLiteral(ref s) => Ok(Value::new(s.node.clone())),
+        Expr::CompiledLiteral(_, ref v) => Ok(v.clone()),
+        Expr::Literal(_) => panic!("literals should be compiled at this point: {}", expr.node),
         Expr::Not(ref s) => Ok(Value::new(!eval_expr(s, context)?.to_bool())),
         Expr::Minus(ref s) => t(eval_expr(s, context)?.minus(), expr),
         Expr::Plus(ref s) => t(eval_expr(s, context)?.plus(), expr),
@@ -751,7 +752,9 @@ fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
             }
             make_set(values, context, expr.span)
         }
-        Expr::ListComprehension(..) | Expr::DictComprehension(..) | Expr::SetComprehension(..) => unreachable!(),
+        Expr::ListComprehension(..) | Expr::DictComprehension(..) | Expr::SetComprehension(..) => {
+            unreachable!("comprehension not possible here {}", ***expr)
+        }
         Expr::ComprehensionCompiled(ref e) => e.eval(expr.span, context),
     }
 }
@@ -759,6 +762,7 @@ fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
 // Perform an assignment on the LHS represented by this AST element
 fn set_expr(expr: &AstExpr, context: &EvaluationContext, new_value: Value) -> EvalResult {
     let ok = Ok(Value::new(NoneType::None));
+    let new_value = new_value.clone();
     match expr.node {
         Expr::Tuple(ref v) | Expr::List(ref v) => {
             // TODO: the span here should probably include the rvalue
@@ -810,15 +814,17 @@ fn eval_assign_modify<F>(
     op: F,
 ) -> EvalResult
 where
-    F: FnOnce(&Value, Value) -> Result<Value, ValueError>,
+    F: FnOnce(Value, Value) -> Result<Value, ValueError>,
 {
+    // println!("eval {}", ***stmt);
     let lhs = transform(lhs, context)?;
     let l = eval_transformed(&lhs, context)?;
     let r = eval_expr(rhs, context)?;
-    set_transformed(&lhs, context, t(op(&l, r), stmt)?)
+    let v = t(op(l, r), stmt)?;
+    set_transformed(&lhs, context, v)
 }
 
-fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult {
+pub fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult {
     match stmt.node {
         Statement::Break => Err(EvalException::Break(stmt.span)),
         Statement::Continue => Err(EvalException::Continue(stmt.span)),
@@ -835,22 +841,30 @@ fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult {
             set_expr(lhs, context, rhs)
         }
         Statement::Assign(ref lhs, AssignOp::Increment, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, Value::add)
+            //eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::add(&l, r))
+            
+            eval_assign_modify(stmt, lhs, rhs, context, |mut l, r| {
+                match l.add_assign(r)? {
+                    Some(v) => Ok(v),
+                    None => Ok(l),
+                }
+            })
+            
         }
         Statement::Assign(ref lhs, AssignOp::Decrement, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, Value::sub)
+            eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::sub(&l, r))
         }
         Statement::Assign(ref lhs, AssignOp::Multiplier, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, Value::mul)
+            eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::mul(&l, r))
         }
         Statement::Assign(ref lhs, AssignOp::Divider, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, Value::div)
+            eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::div(&l, r))
         }
         Statement::Assign(ref lhs, AssignOp::FloorDivider, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, Value::floor_div)
+            eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::floor_div(&l, r))
         }
         Statement::Assign(ref lhs, AssignOp::Percent, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, Value::percent)
+            eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::percent(&l, r))
         }
         Statement::If(ref cond, ref st) => {
             if eval_expr(cond, context)?.to_bool() {
@@ -907,8 +921,9 @@ fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult {
             t(context.env.set(&stmt.name.node, f.clone()), &stmt.name)?;
             Ok(f)
         }
-        Statement::Def(..) => unreachable!(),
+        Statement::Def(..) => unreachable!("def not possible here"),
         Statement::Load(ref name, ref v) => {
+            // println!("loading {:?}", name);
             let loadenv = context.env.loader().load(name)?;
             for &(ref new_name, ref orig_name) in v.iter() {
                 t(

@@ -66,6 +66,8 @@ starlark_module! {global_functions =>
         )
     }
 
+
+
     /// [any](
     /// https://github.com/google/skylark/blob/a0e5de7e63b47e716cca7226662a4c95d47bf873/doc/spec.md#any
     /// ): returns true if any value in the iterable object have a truth value of true.
@@ -233,6 +235,12 @@ starlark_module! {global_functions =>
     /// dict([(1, 2)], x=3) == {1: 2, 'x': 3}
     /// # )").unwrap());
     /// ```
+
+    glob(*args, **kwargs) {
+        let v : Vec<Value> = Vec::new();
+        Ok(Value::from(v))
+    }
+
     dict(?#a, **kwargs) {
         let mut map = Dictionary::new();
         if let Some(a) = a {

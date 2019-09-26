@@ -34,12 +34,19 @@ impl TypedValue for bool {
         Value(ValueInner::Bool(ValueHolder::new(self)))
     }
 
+    fn clone_mut(&self) -> Value {
+        self.clone().new_value()
+    }
+
     fn to_repr(&self) -> String {
         if *self {
             "True".to_owned()
         } else {
             "False".to_owned()
         }
+    }
+    fn to_json(&self) -> String {
+        self.to_repr()
     }
     fn to_int(&self) -> Result<i64, ValueError> {
         Ok(if *self { 1 } else { 0 })

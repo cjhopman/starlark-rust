@@ -25,7 +25,11 @@ pub mod interpolation;
 use std::iter;
 
 impl TypedValue for String {
-    type Holder = Immutable<String>;
+    type Holder = Mutable<String>;
+
+    fn clone_mut(&self) -> Value {
+        self.clone().new_value()
+    }
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
@@ -43,6 +47,9 @@ impl TypedValue for String {
                 .map(|x| -> String { x.escape_debug().collect() })
                 .fold("".to_string(), |accum, s| accum + &s)
         )
+    }
+    fn to_json(&self) -> String {
+        self.to_repr()
     }
 
     const TYPE: &'static str = "string";
@@ -146,6 +153,11 @@ impl TypedValue for String {
     /// ```
     fn add(&self, other: &String) -> Result<String, ValueError> {
         Ok(self.chars().chain(other.to_str().chars()).collect())
+    }
+
+    fn add_assign(&mut self, other: &String) -> Result<(), ValueError> {
+        *self += other;
+        Ok(())
     }
 
     /// Repeat `other` times this string.

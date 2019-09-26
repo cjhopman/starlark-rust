@@ -164,7 +164,12 @@ starlark_module! {global =>
         let mut this = this.downcast_mut::<Dictionary>()?.unwrap();
         match this.remove(&key)? {
             Some(x) => Ok(x),
-            None => if default.get_type() == "NoneType" {
+            None =>  Ok(default)
+
+            /*
+            TODO(cjhopman): Is this actually wrong?
+            if default.get_type() == "NoneType" {
+
                 let key_error = format!("Key '{}' not found in '{}'", key.to_repr(), this.to_repr());
                 starlark_err!(
                     DICT_KEY_NOT_FOUND_ERROR_CODE,
@@ -174,6 +179,7 @@ starlark_module! {global =>
             } else {
                 Ok(default.clone())
             }
+            */
         }
     }
 

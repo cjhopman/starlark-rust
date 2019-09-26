@@ -255,6 +255,10 @@ impl<
 impl TypedValue for Tuple {
     type Holder = Immutable<Tuple>;
 
+    fn clone_mut(&self) -> Value {
+        self.clone().new_value()
+    }
+
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {

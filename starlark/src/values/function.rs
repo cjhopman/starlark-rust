@@ -134,11 +134,11 @@ pub type StarlarkFunctionPrototype =
 ///
 /// Public to be referenced in macros.
 #[doc(hidden)]
-pub struct NativeFunction {
+pub struct NativeFunction<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult> {
     /// Pointer to a native function.
     /// Note it is a function pointer, not `Box<Fn(...)>`
     /// to avoid generic instantiation and allocation for each native function.
-    function: fn(&CallStack, TypeValues, ParameterParser) -> ValueResult,
+    function: F,
     signature: Vec<FunctionParameter>,
     function_type: FunctionType,
 }
@@ -223,12 +223,8 @@ impl From<FunctionError> for ValueError {
     }
 }
 
-impl NativeFunction {
-    pub fn new(
-        name: String,
-        function: fn(&CallStack, TypeValues, ParameterParser) -> ValueResult,
-        signature: Vec<FunctionParameter>,
-    ) -> Value {
+impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> NativeFunction<F> {
+    pub fn new(name: String, function: F, signature: Vec<FunctionParameter>) -> Value {
         Value::new(NativeFunction {
             function,
             signature,
@@ -427,8 +423,14 @@ impl<'a> ParameterParser<'a> {
 }
 
 /// Define the function type
-impl TypedValue for NativeFunction {
-    type Holder = Immutable<NativeFunction>;
+impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> TypedValue
+    for NativeFunction<F>
+{
+    type Holder = Immutable<NativeFunction<F>>;
+
+    fn clone_mut(&self) -> Value {
+        panic!()
+    }
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
@@ -469,6 +471,10 @@ impl TypedValue for NativeFunction {
 
 impl TypedValue for WrappedMethod {
     type Holder = Immutable<WrappedMethod>;
+
+    fn clone_mut(&self) -> Value {
+        panic!()
+    }
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
