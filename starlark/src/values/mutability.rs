@@ -17,28 +17,29 @@
 use crate::values::ValueError;
 use std::cell::{BorrowError, BorrowMutError, Cell, Ref, RefCell, RefMut};
 use std::fmt;
+use std::rc::Rc;
 use std::ops::Deref;
 
 /// A helper enum for defining the level of mutability of an iterable.
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
-pub enum IterableMutability {
+pub enum MutabilityState {
     Shared,
     Mutable,
-    Immutable,
-    FrozenForIteration,
+    Frozen,
+    FrozenForIteration(bool),
 }
 
-impl IterableMutability {
+impl MutabilityState {
     /// Tests the mutability value and return the appropriate error
     ///
     /// This method is to be called simply `mutability.test()?` to return
     /// an error if the current container is no longer mutable.
     pub fn test(self) -> Result<(), ValueError> {
         match self {
-            IterableMutability::Shared => Ok(()),
-            IterableMutability::Mutable => Ok(()),
-            IterableMutability::Immutable => Err(ValueError::CannotMutateImmutableValue),
-            IterableMutability::FrozenForIteration => Err(ValueError::MutationDuringIteration),
+            MutabilityState::Shared => Ok(()),
+            MutabilityState::Mutable => Ok(()),
+            MutabilityState::Frozen => Err(ValueError::CannotMutateFrozenValue),
+            MutabilityState::FrozenForIteration(_) => Err(ValueError::MutationDuringIteration),
         }
     }
 }
@@ -76,6 +77,8 @@ impl<'a, T: ?Sized + 'a> RefOrRef<'a, T> {
 pub trait ContentCell {
     type Content;
 
+    const MUTABLE : bool;
+
     fn new(value: Self::Content) -> Self;
     fn borrow(&self) -> RefOrRef<'_, Self::Content>;
     fn try_borrow(&self) -> Result<RefOrRef<Self::Content>, BorrowError>;
@@ -83,42 +86,127 @@ pub trait ContentCell {
     fn try_borrow_mut(&self) -> Result<RefMut<'_, Self::Content>, ()>;
     fn shared(&self) -> Self;
     fn as_ptr(&self) -> *const Self::Content;
+
+    fn test_mut(&self) -> Result<(), ValueError>;
+
+    fn freeze(&self);
+    fn freeze_for_iteration(&self);
+    fn unfreeze_for_iteration(&self);
 }
 
 /// Container for immutable data
 #[derive(Debug, Clone)]
 pub struct ImmutableCell<T>(T);
 
-impl<T> ContentCell for RefCell<T> {
+pub trait CloneForCell {
+    fn clone_for_cell(&self) -> Self;
+}
+
+#[derive(Debug, Clone)]
+pub struct MutableCell<T : CloneForCell> {
+    state: Cell<MutabilityState>,
+    val : Rc<RefCell<T>>,
+}
+
+impl<T: CloneForCell> MutableCell<T> {
+    pub fn ensure_owned(&self) {
+        if let MutabilityState::Shared = self.state.get() {
+            // println!("making owned");
+            self.state.set(MutabilityState::Mutable);
+            let mut bw = self.val.borrow_mut();
+            let cl = bw.clone_for_cell();
+            *bw = cl;
+        }
+    }
+}
+
+impl<T: CloneForCell> ContentCell for MutableCell<T> {
     type Content = T;
 
+    const MUTABLE: bool = true;
+
     fn new(value: T) -> Self {
-        RefCell::new(value)
+        Self {
+            state: Cell::new(MutabilityState::Mutable),
+            val: Rc::new(RefCell::new(value)),
+        }
+    }
+
+    fn test_mut(&self) -> Result<(), ValueError> {
+        self.state.get().test()
     }
 
     fn borrow(&self) -> RefOrRef<T> {
-        RefOrRef::Borrowed(RefCell::borrow(self))
+        RefOrRef::Borrowed(RefCell::borrow(&self.val))
     }
 
     fn try_borrow(&self) -> Result<RefOrRef<T>, BorrowError> {
-        RefCell::try_borrow(self).map(RefOrRef::Borrowed)
+        RefCell::try_borrow(&self.val).map(RefOrRef::Borrowed)
     }
 
     fn borrow_mut(&self) -> RefMut<Self::Content> {
-        RefCell::borrow_mut(self)
+        self.ensure_owned();
+        RefCell::borrow_mut(&self.val)
     }
 
     fn try_borrow_mut(&self) -> Result<RefMut<Self::Content>, ()> {
-        RefCell::try_borrow_mut(self).map_err(|e| ())
+        self.ensure_owned();
+        RefCell::try_borrow_mut(&self.val).map_err(|e| ())
     }
 
     fn as_ptr(&self) -> *const T {
-        RefCell::as_ptr(self)
+        RefCell::as_ptr(&self.val)
+    }
+
+    fn shared(&self) -> Self {
+        match self.state.get() {
+            MutabilityState::FrozenForIteration(_) => panic!("attempt to freeze during iteration"),
+            MutabilityState::Frozen => {}
+            MutabilityState::Mutable => self.state.set(MutabilityState::Shared),
+            MutabilityState::Shared => {},
+        }
+
+        Self{
+            state : Cell::new(MutabilityState::Shared),
+            val: self.val.clone(),
+        }
+    }
+
+    fn freeze(&self) {
+        match self.state.get() {
+            MutabilityState::FrozenForIteration(_) => panic!("attempt to freeze during iteration"),
+            MutabilityState::Frozen => {}
+            MutabilityState::Mutable => self.state.set(MutabilityState::Frozen),
+            MutabilityState::Shared => self.state.set(MutabilityState::Frozen),
+        }
+    }
+
+    /// Freezes the current value for iterating over.
+    fn freeze_for_iteration(&self) {
+        match self.state.get() {
+            MutabilityState::Frozen => {}
+            MutabilityState::FrozenForIteration(_) => panic!("already frozen"),
+            MutabilityState::Mutable => self.state.set(MutabilityState::FrozenForIteration(false)),
+            MutabilityState::Shared => self.state.set(MutabilityState::FrozenForIteration(true)),
+        }
+    }
+
+    /// Unfreezes the current value for iterating over.
+    fn unfreeze_for_iteration(&self) {
+        match self.state.get() {
+            MutabilityState::Frozen => {}
+            MutabilityState::FrozenForIteration(false) => self.state.set(MutabilityState::Mutable),
+            MutabilityState::FrozenForIteration(true) => self.state.set(MutabilityState::Shared),
+            MutabilityState::Mutable => panic!("not frozen"),
+            MutabilityState::Shared => panic!("not frozen"),
+        }
     }
 }
 
 impl<T> ContentCell for ImmutableCell<T> {
     type Content = T;
+
+    const MUTABLE : bool = false;
 
     fn new(value: T) -> Self {
         ImmutableCell(value)
@@ -143,73 +231,21 @@ impl<T> ContentCell for ImmutableCell<T> {
     fn as_ptr(&self) -> *const T {
         &self.0 as *const T
     }
-}
 
-/// Holder for mutability flag, either cell or always immutable.
-pub trait MutabilityCell: fmt::Debug {
-    fn get(&self) -> IterableMutability;
-    fn freeze(&self);
-    fn freeze_for_iteration(&self);
-    fn unfreeze_for_iteration(&self);
-    fn new() -> Self;
-}
-
-#[derive(Debug, Clone)]
-pub struct ImmutableMutability;
-
-#[derive(Debug)]
-pub struct MutableMutability(Cell<IterableMutability>);
-
-impl MutabilityCell for ImmutableMutability {
-    fn get(&self) -> IterableMutability {
-        IterableMutability::Immutable
+    fn shared(&self) -> Self {
+        unimplemented!("shared not impled for immutables")
     }
 
-    fn freeze(&self) {}
-
-    fn freeze_for_iteration(&self) {}
-
-    fn unfreeze_for_iteration(&self) {}
-
-    /// Create a new cell, initialized to mutable for mutable types,
-    /// and immutable for immutable types.
-    fn new() -> Self {
-        ImmutableMutability
-    }
-}
-
-impl MutabilityCell for MutableMutability {
-    fn get(&self) -> IterableMutability {
-        self.0.get()
+    fn test_mut(&self) -> Result<(), ValueError> {
+        Err(ValueError::CannotMutateImmutableValue)
     }
 
     fn freeze(&self) {
-        match self.0.get() {
-            IterableMutability::FrozenForIteration => panic!("attempt to freeze during iteration"),
-            IterableMutability::Immutable => {}
-            IterableMutability::Mutable => self.0.set(IterableMutability::Immutable),
-        }
     }
 
-    /// Freezes the current value for iterating over.
     fn freeze_for_iteration(&self) {
-        match self.0.get() {
-            IterableMutability::Immutable => {}
-            IterableMutability::FrozenForIteration => panic!("already frozen"),
-            IterableMutability::Mutable => self.0.set(IterableMutability::FrozenForIteration),
-        }
     }
 
-    /// Unfreezes the current value for iterating over.
     fn unfreeze_for_iteration(&self) {
-        match self.0.get() {
-            IterableMutability::Immutable => {}
-            IterableMutability::FrozenForIteration => self.0.set(IterableMutability::Mutable),
-            IterableMutability::Mutable => panic!("not frozen"),
-        }
-    }
-
-    fn new() -> Self {
-        MutableMutability(Cell::new(IterableMutability::Mutable))
     }
 }

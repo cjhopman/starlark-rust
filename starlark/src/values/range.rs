@@ -15,7 +15,7 @@
 //! `range()` builtin implementation
 
 use crate::values::iter::TypedIterable;
-use crate::values::{Immutable, TypedValue, Value, ValueError};
+use crate::values::{ImmutableCell, TypedValue, Value, ValueError};
 use std::num::NonZeroI64;
 use std::{iter, mem};
 
@@ -51,10 +51,6 @@ impl Iterator for RangeIterator {
 
 impl TypedValue for Range {
     const TYPE: &'static str = "range";
-
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
-    }
 
     fn to_str(&self) -> String {
         self.to_repr()
@@ -202,7 +198,7 @@ impl TypedValue for Range {
         }
     }
 
-    type Holder = Immutable<Range>;
+    type Holder = ImmutableCell<Range>;
 
     fn values_for_descendant_check_and_freeze(&self) -> Box<dyn Iterator<Item = Value>> {
         Box::new(iter::empty())

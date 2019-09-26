@@ -58,6 +58,7 @@ pub enum ValueError {
     IntegerOverflow,
     /// Trying to modify an immutable value.
     CannotMutateImmutableValue,
+    CannotMutateFrozenValue,
     /// Trying to apply incorrect parameter type, e.g. for slicing.
     IncorrectParameterType,
     /// Trying to apply incorrect parameter type, e.g. for slicing.
@@ -138,6 +139,7 @@ impl SyntaxError for ValueError {
                         ValueError::DivisionByZero => "Division by zero".to_owned(),
                         ValueError::IntegerOverflow => "Integer overflow".to_owned(),
                         ValueError::CannotMutateImmutableValue => "Immutable".to_owned(),
+                        ValueError::CannotMutateFrozenValue => "Frozen".to_owned(),
                         ValueError::IncorrectParameterType => {
                             "Type of parameters mismatch".to_owned()
                         }
@@ -182,6 +184,7 @@ impl SyntaxError for ValueError {
                         ValueError::DivisionByZero => "Cannot divide by zero".to_owned(),
                         ValueError::IntegerOverflow => "Integer overflow".to_owned(),
                         ValueError::CannotMutateImmutableValue => "Immutable".to_owned(),
+                        ValueError::CannotMutateFrozenValue => "Frozen".to_owned(),
                         ValueError::IncorrectParameterType => {
                             "Type of parameters mismatch".to_owned()
                         }
@@ -214,6 +217,7 @@ impl SyntaxError for ValueError {
                             ValueError::DivisionByZero => DIVISION_BY_ZERO_ERROR_CODE,
                             ValueError::IntegerOverflow => INTEGER_OVERFLOW_ERROR_CODE,
                             ValueError::CannotMutateImmutableValue => IMMUTABLE_ERROR_CODE,
+                            ValueError::CannotMutateFrozenValue => IMMUTABLE_ERROR_CODE,
                             ValueError::IncorrectParameterType | ValueError::IncorrectParameterTypeNamed(..) => {
                                 INCORRECT_PARAMETER_TYPE_ERROR_CODE
                             }

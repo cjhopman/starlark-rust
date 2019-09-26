@@ -23,7 +23,7 @@ use crate::syntax::ast::{AstParameter, AstStatement, AstString, Expr, Parameter,
 use crate::values::error::ValueError;
 use crate::values::function::{FunctionParameter, FunctionType};
 use crate::values::none::NoneType;
-use crate::values::{function, Immutable, TypedValue, Value, ValueResult};
+use crate::values::{function, mutability::ImmutableCell, TypedValue, Value, ValueResult};
 use codemap::{CodeMap, Spanned};
 use codemap_diagnostic::Diagnostic;
 use linked_hash_map::LinkedHashMap;
@@ -178,11 +178,7 @@ impl Def {
 }
 
 impl TypedValue for Def {
-    type Holder = Immutable<Def>;
-
-    fn clone_mut(&self) -> Value {
-        panic!()
-    }
+    type Holder = ImmutableCell<Def>;
 
     const TYPE: &'static str = "function";
 

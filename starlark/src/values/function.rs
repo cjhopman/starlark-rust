@@ -426,11 +426,7 @@ impl<'a> ParameterParser<'a> {
 impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> TypedValue
     for NativeFunction<F>
 {
-    type Holder = Immutable<NativeFunction<F>>;
-
-    fn clone_mut(&self) -> Value {
-        panic!()
-    }
+    type Holder = ImmutableCell<NativeFunction<F>>;
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
@@ -470,11 +466,7 @@ impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> Ty
 }
 
 impl TypedValue for WrappedMethod {
-    type Holder = Immutable<WrappedMethod>;
-
-    fn clone_mut(&self) -> Value {
-        panic!()
-    }
+    type Holder = ImmutableCell<WrappedMethod>;
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,

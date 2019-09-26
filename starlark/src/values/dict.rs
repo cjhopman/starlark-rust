@@ -124,13 +124,15 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone>
     }
 }
 
+impl CloneForCell for Dictionary {
+    fn clone_for_cell(&self) -> Self {
+        unimplemented!("clone for dict")
+    }
+}
+
 /// Define the Dictionary type
 impl TypedValue for Dictionary {
-    type Holder = Mutable<Dictionary>;
-
-    fn clone_mut(&self) -> Value {
-        Value::new(Dictionary{content: self.content.clone()})
-    }
+    type Holder = MutableCell<Dictionary>;
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,

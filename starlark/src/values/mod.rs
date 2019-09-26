@@ -96,6 +96,10 @@ use std::fmt;
 use std::marker;
 use std::rc::Rc;
 
+pub use mutability::ImmutableCell;
+pub use mutability::MutableCell;
+pub use mutability::CloneForCell;
+
 /// ValueInner wraps the actual value or a memory pointer
 /// to the actual value for complex type.
 #[derive(Clone)]
@@ -120,8 +124,8 @@ impl Value {
         t.new_value()
     }
 
-    pub fn clone_cow(&self) -> Value {
-        self.value_holder().clone_cow().unwrap_or_else(|| self.clone())
+    pub fn shared(&self) -> Value {
+        self.value_holder().shared().unwrap_or_else(|| self.clone())
     }
 
     fn value_holder(&self) -> &(dyn ValueHolderDyn + 'static) {
@@ -167,59 +171,24 @@ impl Value {
     }
 }
 
-pub trait Mutability {
-    type Content: TypedValue;
-
-    /// This type is mutable or immutable.
-    const MUTABLE: bool;
-
-    /// Type of cell which contains the object.
-    type Cell: ContentCell<Content = Self::Content>;
-
-    /// Type of cell which contains mutability flag.
-    type MutabilityCell: MutabilityCell;
-}
-
 struct ValueHolder<T: TypedValue> {
-    mutability: <<T as TypedValue>::Holder as Mutability>::MutabilityCell,
-    content: <<T as TypedValue>::Holder as Mutability>::Cell,
+    content: <T as TypedValue>::Holder,
 }
 
 impl<T: TypedValue> ValueHolder<T> {
     fn new(value: T) -> ValueHolder<T> {
         ValueHolder {
-            mutability: <<T as TypedValue>::Holder as Mutability>::MutabilityCell::new(),
-            content: <<T as TypedValue>::Holder as Mutability>::Cell::new(value),
+            content: <T as TypedValue>::Holder::new(value),
         }
     }
 }
 
-impl<T: TypedValue<Holder = Immutable<T>> + Clone> Clone for ValueHolder<T> {
+impl<T: TypedValue<Holder = ImmutableCell<T>> + Clone> Clone for ValueHolder<T> {
     fn clone(&self) -> Self {
         ValueHolder {
-            mutability: self.mutability.clone(),
             content: self.content.clone(),
         }
     }
-}
-
-/// Type parameter for immutable types.
-pub struct Immutable<T>(marker::PhantomData<T>);
-/// Type parameter for mutable types.
-pub struct Mutable<T>(marker::PhantomData<T>);
-
-impl<T: TypedValue> Mutability for Mutable<T> {
-    type Content = T;
-    const MUTABLE: bool = true;
-    type Cell = RefCell<T>;
-    type MutabilityCell = MutableMutability;
-}
-
-impl<T: TypedValue> Mutability for Immutable<T> {
-    type Content = T;
-    const MUTABLE: bool = false;
-    type Cell = ImmutableCell<T>;
-    type MutabilityCell = ImmutableMutability;
 }
 
 /// Pointer to data, used for cycle checks.
@@ -255,16 +224,18 @@ impl PartialEq for DataPtr {
 pub struct FunctionId(pub DataPtr);
 
 impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
-    fn clone_cow(&self) -> Option<Value> {
+    fn shared(&self) -> Option<Value> {
         if T::Holder::MUTABLE {
-            
+            let rc : Rc<dyn ValueHolderDyn> = Rc::new(ValueHolder::<T>{content: self.content.shared()});
+            // println!("make_shared {}", self.to_repr());
+            Some(Value(ValueInner::Other(rc)))
         } else {
             None
         }
     }
 
     fn as_any_mut(&self) -> Result<Option<RefMut<'_, dyn Any>>, ValueError> {
-        self.mutability.get().test()?;
+        self.content.test_mut()?;
         Ok(if T::Holder::MUTABLE {
             Some(RefMut::map(self.content.borrow_mut(), |v| {
                 v as &mut dyn Any
@@ -291,7 +262,7 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
 
     /// Freezes the current value.
     fn freeze(&self) {
-        self.mutability.freeze();
+        self.content.freeze();
         for mut value in self
             .content
             .borrow()
@@ -303,12 +274,12 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
 
     /// Freezes the current value for iterating over.
     fn freeze_for_iteration(&self) {
-        self.mutability.freeze_for_iteration();
+        self.content.freeze_for_iteration();
     }
 
     /// Unfreezes the current value for iterating over.
     fn unfreeze_for_iteration(&self) {
-        self.mutability.unfreeze_for_iteration();
+        self.content.unfreeze_for_iteration();
     }
 
     fn to_str(&self) -> String {
@@ -403,7 +374,7 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
                 right: Some(index.get_type().to_owned()),
             });
         }
-        self.mutability.get().test()?;
+        self.content.test_mut()?;
         self.content.borrow_mut().set_at(index, new_value)
     }
 
@@ -451,7 +422,7 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
                 right: None,
             });
         }
-        self.mutability.get().test()?;
+        self.content.test_mut()?;
         self.content.borrow_mut().set_attr(attribute, new_value)
     }
 
@@ -522,7 +493,7 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
 /// `ValueHolder` as virtual functions to put into `Value`.
 /// Should not be used or implemented directly.
 trait ValueHolderDyn {
-    fn clone_cow(&self) -> Option<Value>;
+    fn shared(&self) -> Option<Value>;
     /// This function panics is value is borrowed,
     /// `None` is returned for immutable types,
     /// and `Err` is returned when value is locked for iteration or frozen.
@@ -620,8 +591,7 @@ trait ValueHolderDyn {
 /// A trait for a value with a type that all variable container
 /// will implement.
 pub trait TypedValue: Sized + 'static {
-    /// Must be either `MutableHolder<Self>` or `ImmutableHolder<Self>`
-    type Holder: Mutability<Content = Self>;
+    type Holder: ContentCell<Content = Self>;
 
     /// Return a string describing the type of self, as returned by the type() function.
     const TYPE: &'static str;
@@ -633,8 +603,6 @@ pub trait TypedValue: Sized + 'static {
     fn new_value(self) -> Value {
         Value(ValueInner::Other(Rc::new(ValueHolder::new(self))))
     }
-
-    fn clone_mut(&self) -> Value;
 
     /// Return a list of values to be used in freeze or descendant check operations.
     ///
@@ -1419,7 +1387,7 @@ impl Value {
     /// This function panics if the `Value` is borrowed.
     ///
     /// Error is returned if the value is frozen or frozen for iteration.
-    pub fn downcast_mut<T: TypedValue<Holder = Mutable<T>>>(
+    pub fn downcast_mut<T: CloneForCell + TypedValue<Holder = MutableCell<T>>>(
         &self,
     ) -> Result<Option<RefMut<'_, T>>, ValueError> {
         let any = match self.value_holder().as_any_mut()? {
@@ -1454,7 +1422,7 @@ pub mod string;
 pub mod tuple;
 
 use crate::values::mutability::{
-    ImmutableCell, ImmutableMutability, MutabilityCell, MutableMutability, ContentCell,
+    ContentCell,
     RefOrRef,
 };
 use crate::values::none::NoneType;
@@ -1502,10 +1470,6 @@ mod tests {
 
         /// Define the NoneType type
         impl TypedValue for WrappedNumber {
-            fn clone_mut(&self) -> Value {
-                Value::new(WrappedNumber(self.0))
-            }
-
             fn to_repr(&self) -> String {
                 format!("{:?}", self)
             }
@@ -1520,7 +1484,7 @@ mod tests {
                 Ok(std::cmp::Ord::cmp(self, other))
             }
 
-            type Holder = Immutable<WrappedNumber>;
+            type Holder = ImmutableCell<WrappedNumber>;
 
             fn values_for_descendant_check_and_freeze<'a>(
                 &'a self,

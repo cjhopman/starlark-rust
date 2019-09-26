@@ -115,13 +115,14 @@ impl From<Set> for Value {
     }
 }
 
-impl TypedValue for Set {
-    type Holder = Mutable<Set>;
-
-
-    fn clone_mut(&self) -> Value {
-        Value::new(self.clone())
+impl CloneForCell for Set {
+    fn clone_for_cell(&self) -> Self {
+        unimplemented!("clone for set")
     }
+}
+
+impl TypedValue for Set {
+    type Holder = MutableCell<Set>;
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,

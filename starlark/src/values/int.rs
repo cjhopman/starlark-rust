@@ -80,12 +80,8 @@ where
 
 /// Define the int type
 impl TypedValue for i64 {
-    type Holder = Immutable<Self>;
+    type Holder = ImmutableCell<Self>;
     const TYPE: &'static str = "int";
-
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
-    }
 
     fn new_value(self) -> Value {
         Value(ValueInner::Int(ValueHolder::new(self)))

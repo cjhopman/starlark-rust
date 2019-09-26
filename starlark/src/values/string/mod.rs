@@ -24,12 +24,15 @@ use std::hash::{Hash, Hasher};
 pub mod interpolation;
 use std::iter;
 
-impl TypedValue for String {
-    type Holder = Mutable<String>;
-
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
+impl CloneForCell for String {
+    fn clone_for_cell(&self) -> Self {
+        self.clone()
     }
+}
+
+impl TypedValue for String {
+    type Holder = MutableCell<String>;
+
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,

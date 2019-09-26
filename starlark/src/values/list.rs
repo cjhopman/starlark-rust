@@ -99,12 +99,15 @@ impl List {
     }
 }
 
-impl TypedValue for List {
-    type Holder = Mutable<List>;
-
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
+impl CloneForCell for List {
+    fn clone_for_cell(&self) -> Self {
+        let vals : Vec<_> = self.content.iter().map(|e| e.shared()).collect();
+        Self{content: vals}
     }
+}
+
+impl TypedValue for List {
+    type Holder = MutableCell<List>;
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,

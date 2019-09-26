@@ -172,7 +172,7 @@ to_ast_trait!(Expr, AstExpr, Box);
 impl Expr {
     pub fn is_literal(&self) -> bool {
         match self {
-            Expr::Literal(_) => true,
+            Expr::CompiledLiteral(..) => true,
             _ => false,
         }
     }
@@ -363,7 +363,7 @@ impl Expr {
     }
 
     pub(crate) fn compile(expr: AstExpr) -> Result<AstExpr, Diagnostic> {
-        println!("compile {}", expr.node);
+        // println!("compile {}", expr.node);
         Ok(Box::new(Spanned {
             span: expr.span,
             node: match expr.node {
@@ -883,9 +883,14 @@ impl Display for Expr {
             }
             Expr::ComprehensionCompiled(ref c) => fmt::Display::fmt(&c.to_raw(), f),
             Expr::Literal(AstLiteral::IntLiteral(ref i)) | Expr::CompiledLiteral(AstLiteral::IntLiteral(ref i), _) => i.node.fmt(f),
-            Expr::Literal(AstLiteral::StringLiteral(ref s)) | Expr::CompiledLiteral(AstLiteral::StringLiteral(ref s), _) => fmt_string_literal(f, &s.node),
+            Expr::Literal(AstLiteral::StringLiteral(ref s)) => fmt_string_literal(f, &s.node),
+            Expr::CompiledLiteral(AstLiteral::StringLiteral(ref s), _) => {
+                write!(f, "cmp<")?;
+                fmt_string_literal(f, &s.node)?;
+                write!(f, ">")
+            },
             Expr::Literal(AstLiteral::ListLiteral(_)) => panic!("this shouldn't exist"),
-            Expr::CompiledLiteral(AstLiteral::ListLiteral(_), ref v) => v.fmt(f),
+            Expr::CompiledLiteral(AstLiteral::ListLiteral(_), ref v) => write!(f, "cmp<{}>", v),
         }
     }
 }

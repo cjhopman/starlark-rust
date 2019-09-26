@@ -628,7 +628,7 @@ fn transform(
 
 // Evaluate the AST element, i.e. mutate the environment and return an evaluation result
 fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
-    println!("ex {}", expr.node);
+    // println!("ex {}", expr.node);
     match expr.node {
         Expr::Tuple(ref v) => {
             let r = eval_vector!(v, context);
@@ -647,7 +647,7 @@ fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
         }
         Expr::Identifier(ref i) => t(context.env.get(&i.node), i),
         Expr::Slot(slot, ref i) => t(context.env.get_slot(slot, &i.node), i),
-        Expr::CompiledLiteral(_, ref v) => Ok(v.clone()),
+        Expr::CompiledLiteral(_, ref v) => Ok(v.shared()),
         Expr::Literal(_) => panic!("literals should be compiled at this point: {}", expr.node),
         Expr::Not(ref s) => Ok(Value::new(!eval_expr(s, context)?.to_bool())),
         Expr::Minus(ref s) => t(eval_expr(s, context)?.minus(), expr),

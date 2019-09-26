@@ -253,11 +253,7 @@ impl<
 }
 
 impl TypedValue for Tuple {
-    type Holder = Immutable<Tuple>;
-
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
-    }
+    type Holder = ImmutableCell<Tuple>;
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,

@@ -27,13 +27,9 @@ pub enum NoneType {
 
 /// Define the NoneType type
 impl TypedValue for NoneType {
-    type Holder = Immutable<Self>;
+    type Holder = ImmutableCell<Self>;
     const TYPE: &'static str = "NoneType";
     
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
-    }
-
     fn new_value(self) -> Value {
         Value(ValueInner::None(ValueHolder::new(self)))
     }

@@ -24,11 +24,7 @@ pub struct StarlarkStruct {
 }
 
 impl TypedValue for StarlarkStruct {
-    type Holder = Immutable<StarlarkStruct>;
-
-    fn clone_mut(&self) -> Value {
-        panic!()
-    }
+    type Holder = ImmutableCell<StarlarkStruct>;
 
     fn to_json(&self) -> String {
         let mut s = "{".to_string();

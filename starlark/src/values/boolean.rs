@@ -27,15 +27,11 @@ impl From<bool> for Value {
 
 /// Define the bool type
 impl TypedValue for bool {
-    type Holder = Immutable<Self>;
+    type Holder = ImmutableCell<Self>;
     const TYPE: &'static str = "bool";
 
     fn new_value(self) -> Value {
         Value(ValueInner::Bool(ValueHolder::new(self)))
-    }
-
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
     }
 
     fn to_repr(&self) -> String {
