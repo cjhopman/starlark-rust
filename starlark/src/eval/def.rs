@@ -57,7 +57,7 @@ impl DefCompiled {
                 .or_insert(len);
         }
 
-        let params : Result<Vec<_>, _> = params.into_iter().map(|p| Parameter::compile(p)).collect();
+        let params: Result<Vec<_>, _> = params.into_iter().map(|p| Parameter::compile(p)).collect();
         let params = params?;
 
         DefCompiled::collect_locals(&suite, &mut local_names_to_indices);
@@ -188,12 +188,12 @@ impl TypedValue for Def {
         Box::new(iter::empty())
     }
 
-    fn to_str(&self) -> String {
-        function::to_str(&self.function_type, &self.signature)
+    fn collect_str(&self, collector: &mut String) {
+        function::collect_str(&self.function_type, &self.signature, collector);
     }
 
-    fn to_repr(&self) -> String {
-        function::repr(&self.function_type, &self.signature)
+    fn collect_repr(&self, collector: &mut String)  {
+        function::collect_repr(&self.function_type, &self.signature, collector);
     }
 
     fn call(

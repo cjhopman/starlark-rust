@@ -17,8 +17,8 @@
 use crate::values::ValueError;
 use std::cell::{BorrowError, BorrowMutError, Cell, Ref, RefCell, RefMut};
 use std::fmt;
-use std::rc::Rc;
 use std::ops::Deref;
+use std::rc::Rc;
 
 /// A helper enum for defining the level of mutability of an iterable.
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
@@ -77,7 +77,7 @@ impl<'a, T: ?Sized + 'a> RefOrRef<'a, T> {
 pub trait ContentCell {
     type Content;
 
-    const MUTABLE : bool;
+    const MUTABLE: bool;
 
     fn new(value: Self::Content) -> Self;
     fn borrow(&self) -> RefOrRef<'_, Self::Content>;
@@ -102,20 +102,76 @@ pub trait CloneForCell {
     fn clone_for_cell(&self) -> Self;
 }
 
-#[derive(Debug, Clone)]
-pub struct MutableCell<T : CloneForCell> {
+#[derive(Debug)]
+pub enum Sharable<T> {
+    Uninit,
+    Owned(T),
+    Shared(Rc<T>),
+}
+
+impl<T> Sharable<T> {
+    pub fn to_ref(&self) -> &T {
+        match self {
+            Sharable::Uninit => panic!(),
+            Sharable::Owned(ref t) => t,
+            Sharable::Shared(ref rc) => &*rc,
+        }
+    }
+
+    pub fn to_ref_mut(&mut self) -> &mut T {
+        match self {
+            Sharable::Uninit => panic!(),
+            Sharable::Owned(ref mut t) => t,
+            Sharable::Shared(_) => panic!(),
+        }
+    }
+
+    pub fn shared(&mut self) -> Sharable<T> {
+        match self {
+            Sharable::Uninit => panic!(),
+            Sharable::Shared(ref rc) => Sharable::Shared(rc.clone()),
+            Sharable::Owned(_) => {
+                let mut taken = Sharable::Uninit;
+                std::mem::swap(self, &mut taken);
+                match taken {
+                    Sharable::Owned(t) => {
+                        let rc = Rc::new(t);
+                        let mut sharable = Sharable::Shared(rc.clone());
+                        std::mem::swap(self, &mut sharable);
+                        Sharable::Shared(rc.clone())
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct MutableCell<T: CloneForCell> {
     state: Cell<MutabilityState>,
-    val : Rc<RefCell<T>>,
+    val: RefCell<Sharable<T>>,
 }
 
 impl<T: CloneForCell> MutableCell<T> {
     pub fn ensure_owned(&self) {
-        if let MutabilityState::Shared = self.state.get() {
-            // println!("making owned");
-            self.state.set(MutabilityState::Mutable);
-            let mut bw = self.val.borrow_mut();
-            let cl = bw.clone_for_cell();
-            *bw = cl;
+        match self.state.get() {
+            MutabilityState::Shared => {
+                self.state.set(MutabilityState::Mutable);
+                // println!("making owned");
+                let mut bw = self.val.borrow_mut();
+                let cl = match *bw {
+                    Sharable::Shared(ref rc) => rc.clone_for_cell(),
+                    _ => panic!(),
+                };
+                *bw = Sharable::Owned(cl);
+            }
+            MutabilityState::Mutable => match *self.val.borrow() {
+                Sharable::Owned(..) => {}
+                _ => panic!(),
+            },
+            MutabilityState::Frozen => panic!(),
+            MutabilityState::FrozenForIteration(_) => panic!(),
         }
     }
 }
@@ -128,7 +184,7 @@ impl<T: CloneForCell> ContentCell for MutableCell<T> {
     fn new(value: T) -> Self {
         Self {
             state: Cell::new(MutabilityState::Mutable),
-            val: Rc::new(RefCell::new(value)),
+            val: RefCell::new(Sharable::Owned(value)),
         }
     }
 
@@ -137,38 +193,58 @@ impl<T: CloneForCell> ContentCell for MutableCell<T> {
     }
 
     fn borrow(&self) -> RefOrRef<T> {
-        RefOrRef::Borrowed(RefCell::borrow(&self.val))
+        RefOrRef::Borrowed(Ref::map(RefCell::borrow(&self.val), Sharable::to_ref))
     }
 
     fn try_borrow(&self) -> Result<RefOrRef<T>, BorrowError> {
-        RefCell::try_borrow(&self.val).map(RefOrRef::Borrowed)
+        RefCell::try_borrow(&self.val).map(|b| RefOrRef::Borrowed(Ref::map(b, Sharable::to_ref)))
     }
 
     fn borrow_mut(&self) -> RefMut<Self::Content> {
         self.ensure_owned();
-        RefCell::borrow_mut(&self.val)
+        RefMut::map(RefCell::borrow_mut(&self.val), Sharable::to_ref_mut)
     }
 
     fn try_borrow_mut(&self) -> Result<RefMut<Self::Content>, ()> {
-        self.ensure_owned();
-        RefCell::try_borrow_mut(&self.val).map_err(|e| ())
+        match self.state.get() {
+            MutabilityState::Shared | MutabilityState::Mutable => {
+                self.ensure_owned();
+                RefCell::try_borrow_mut(&self.val)
+                    .map(|b| RefMut::map(b, Sharable::to_ref_mut))
+                    .map_err(|e| ())
+            }
+            MutabilityState::Frozen => Err(()),
+            MutabilityState::FrozenForIteration(_) => Err(()),
+        }
     }
 
     fn as_ptr(&self) -> *const T {
-        RefCell::as_ptr(&self.val)
+        let ptr = RefCell::as_ptr(&self.val);
+
+        unsafe {
+            match *ptr {
+                Sharable::Uninit => panic!(),
+                Sharable::Owned(ref p) => &*p,
+                Sharable::Shared(ref rc) => &**rc,
+            }
+        }
     }
 
     fn shared(&self) -> Self {
         match self.state.get() {
             MutabilityState::FrozenForIteration(_) => panic!("attempt to freeze during iteration"),
             MutabilityState::Frozen => {}
-            MutabilityState::Mutable => self.state.set(MutabilityState::Shared),
-            MutabilityState::Shared => {},
+            MutabilityState::Mutable => {
+                self.state.set(MutabilityState::Shared);
+            }
+            MutabilityState::Shared => {}
         }
 
-        Self{
-            state : Cell::new(MutabilityState::Shared),
-            val: self.val.clone(),
+        let shared = self.val.borrow_mut().shared();
+
+        Self {
+            state: Cell::new(MutabilityState::Shared),
+            val: RefCell::new(shared),
         }
     }
 
@@ -206,7 +282,7 @@ impl<T: CloneForCell> ContentCell for MutableCell<T> {
 impl<T> ContentCell for ImmutableCell<T> {
     type Content = T;
 
-    const MUTABLE : bool = false;
+    const MUTABLE: bool = false;
 
     fn new(value: T) -> Self {
         ImmutableCell(value)
@@ -240,12 +316,9 @@ impl<T> ContentCell for ImmutableCell<T> {
         Err(ValueError::CannotMutateImmutableValue)
     }
 
-    fn freeze(&self) {
-    }
+    fn freeze(&self) {}
 
-    fn freeze_for_iteration(&self) {
-    }
+    fn freeze_for_iteration(&self) {}
 
-    fn unfreeze_for_iteration(&self) {
-    }
+    fn unfreeze_for_iteration(&self) {}
 }

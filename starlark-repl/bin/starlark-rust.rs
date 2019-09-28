@@ -49,6 +49,9 @@ use starlark::values::*;
 
 const EXIT_CODE_FAILURE: i32 = 2;
 
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "starlark-repl",
@@ -75,6 +78,13 @@ pub struct Opt {
         help = "Starlark command to run after files have been parsed."
     )]
     command: Option<String>,
+
+    #[structopt(
+        long = "dir",
+        help = "cd to here."
+    )]
+    dir: Option<String>,
+
 
     #[structopt(short = "x", help = "no-bucky")]
     not_buck: bool,
@@ -510,6 +520,10 @@ use std::str::FromStr;
 fn main() {
     let opt = Opt::from_args();
 
+    if let Some(d) = opt.dir {
+        assert!(std::env::set_current_dir(&d).is_ok());
+    }
+
     let command = opt.command;
     let ast = opt.ast;
     let buck = !opt.not_buck;
@@ -557,7 +571,7 @@ fn main() {
         } else {
             let sp: Vec<_> = line.split('=').collect();
             if sp.len() != 2 {
-                println!("wtf: {}", line);
+                // println!("wtf: {}", line);
             } else {
                 let key = sp[0];
                 let val = sp[1];

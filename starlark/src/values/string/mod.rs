@@ -33,6 +33,9 @@ impl CloneForCell for String {
 impl TypedValue for String {
     type Holder = MutableCell<String>;
 
+    fn find_in<'a>(&'_ self, map: &'a LinkedHashMap<String, Value>) -> Option<&'a Value> {
+        map.get(self)
+    }
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
@@ -40,19 +43,21 @@ impl TypedValue for String {
         Box::new(iter::empty())
     }
 
-    fn to_str(&self) -> String {
-        self.clone()
+    fn collect_str(&self, s:&mut String)  {
+        s.push_str(self);
     }
-    fn to_repr(&self) -> String {
-        format!(
-            "\"{}\"",
-            self.chars()
-                .map(|x| -> String { x.escape_debug().collect() })
-                .fold("".to_string(), |accum, s| accum + &s)
-        )
+
+    fn collect_repr(&self, s:&mut String) {
+        s.push('"');
+        for x in self.chars() {
+            for c in x.escape_debug() {
+                s.push(c);
+            }
+        }
+        s.push('"');
     }
     fn to_json(&self) -> String {
-        self.to_repr()
+        self.to_repr_slow()
     }
 
     const TYPE: &'static str = "string";
@@ -71,7 +76,7 @@ impl TypedValue for String {
     }
 
     fn compare(&self, other: &String) -> Result<Ordering, ValueError> {
-        Ok(self.cmp(&other.to_str()))
+        Ok(self.cmp(&other))
     }
 
     fn at(&self, index: Value) -> ValueResult {
@@ -155,7 +160,7 @@ impl TypedValue for String {
     /// # );
     /// ```
     fn add(&self, other: &String) -> Result<String, ValueError> {
-        Ok(self.chars().chain(other.to_str().chars()).collect())
+        Ok(self.chars().chain(other.chars()).collect())
     }
 
     fn add_assign(&mut self, other: &String) -> Result<(), ValueError> {

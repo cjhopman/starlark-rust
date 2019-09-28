@@ -262,20 +262,22 @@ impl TypedValue for Tuple {
         Box::new(self.content.iter().cloned())
     }
 
-    fn to_repr(&self) -> String {
-        format!(
-            "({}{})",
-            self.content
-                .iter()
-                .map(Value::to_repr)
-                .enumerate()
-                .fold("".to_string(), |accum, s| if s.0 == 0 {
-                    accum + &s.1
-                } else {
-                    accum + ", " + &s.1
-                },),
-            if self.content.len() == 1 { "," } else { "" }
-        )
+    fn collect_repr(&self, s: &mut String) {
+        s.push('(');
+        let mut first = true;
+        for v in &self.content {
+            if first {
+                first = false;
+            } else {
+                s.push_str(", ");
+            }
+            v.collect_repr(s);
+        }
+
+        if self.content.len() == 1 {
+            s.push(',');
+        }
+        s.push(')');
     }
     const TYPE: &'static str = "tuple";
     fn to_bool(&self) -> bool {

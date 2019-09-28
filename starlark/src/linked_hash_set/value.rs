@@ -142,19 +142,19 @@ impl TypedValue for Set {
     /// assert_eq!("[1]", Value::from(vec![1]).to_str());
     /// assert_eq!("[]", Value::from(Vec::<i64>::new()).to_str());
     /// ```
-    fn to_repr(&self) -> String {
-        format!(
-            "{{{}}}",
-            self.content
-                .iter()
-                .map(|x| x.get_value().to_repr(),)
-                .enumerate()
-                .fold("".to_string(), |accum, s| if s.0 == 0 {
-                    accum + &s.1
-                } else {
-                    accum + ", " + &s.1
-                },)
-        )
+    fn collect_repr(&self, collector: &mut String) {
+        collector.push('[');
+        let mut first = true;
+        for x in self.content.iter() {
+            if first {                
+                first = false;
+            } else {
+                collector.push_str(", ");
+            }
+            x.get_value().collect_repr(collector);
+        }
+
+        collector.push(']');
     }
 
     const TYPE: &'static str = "set";

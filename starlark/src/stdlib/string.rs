@@ -361,7 +361,6 @@ starlark_module! {global =>
     /// ```
     string.find(this: String, #needle: String, #start = 0, #end = NoneType::None) {
         convert_indices!(this, start, end);
-        let needle = needle.to_str();
         if let Some(substring) = this.as_str().get(start..end) {
             if let Some(offset) = substring.find(needle.as_str()) {
                 ok!((offset + start) as i64);
@@ -995,7 +994,6 @@ starlark_module! {global =>
                 "Empty separtor".to_owned()
             )
         }
-        let this = this.to_str();
         if let Some(offset) = this.rfind(needle.as_str()) {
             let offset2 = offset + needle.len();
             ok!((
@@ -1076,7 +1074,7 @@ starlark_module! {global =>
     /// # )"#).unwrap());
     /// ```
     string.rstrip(this: String) {
-        ok!(this.to_str().trim_end())
+        ok!(this.trim_end())
     }
 
     /// [string.split](
@@ -1122,7 +1120,6 @@ starlark_module! {global =>
     /// # )"#).unwrap());
     /// ```
     string.split(this: String, #sep = NoneType::None, #maxsplit = NoneType::None) {
-        let this = this.to_str();
         let maxsplit = if maxsplit.get_type() == "NoneType" {
             None
         } else {
@@ -1176,7 +1173,7 @@ starlark_module! {global =>
     /// # )"#).unwrap());
     /// ```
     string.split_codepoints(this: String) {
-        let v : Vec<String> = this.to_str().chars().map(|x| x.to_string()).collect();
+        let v : Vec<String> = this.chars().map(|x| x.to_string()).collect();
         ok!(v)
     }
 
@@ -1205,7 +1202,6 @@ starlark_module! {global =>
     /// ```
     string.splitlines(this: String, #keepends = false) {
         check_type!(keepends, "string.splitlines", bool);
-        let this = this.to_str();
         let mut s = this.as_str();
         let keepends = keepends.to_bool();
         let mut lines = Vec::new();
@@ -1250,7 +1246,7 @@ starlark_module! {global =>
     /// ```
     string.startswith(this: String, #prefix) {
         check_string!(prefix, startswith);
-        ok!(this.to_str().starts_with(prefix.to_str().as_str()))
+        ok!(this.starts_with(prefix.to_str().as_str()))
     }
 
     /// [string.strip](
@@ -1290,7 +1286,7 @@ starlark_module! {global =>
     string.title(this: String) {
         let mut last_space = true;
         let mut result = String::new();
-        for c in this.to_str().chars() {
+        for c in this.chars() {
             if  !c.is_alphabetic() {
                 last_space = true;
                 for c1 in c.to_lowercase() {
@@ -1327,7 +1323,7 @@ starlark_module! {global =>
     /// # )"#).unwrap());
     /// ```
     string.upper(this: String) {
-        ok!(this.to_str().to_uppercase())
+        ok!(this.to_uppercase())
     }
 }
 

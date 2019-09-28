@@ -90,14 +90,13 @@ impl TypedValue for i64 {
     fn equals(&self, other: &i64) -> Result<bool, ValueError> {
         Ok(self == other)
     }
-    fn to_str(&self) -> String {
-        format!("{}", self)
+
+    fn collect_repr(&self, s: &mut String) {
+        s.push_str(&self.to_string());
     }
-    fn to_repr(&self) -> String {
-        format!("{}", self)
-    }
+
     fn to_json(&self) -> String {
-        self.to_repr()
+        self.to_string()
     }
     fn to_int(&self) -> Result<i64, ValueError> {
         Ok(*self)

@@ -116,7 +116,10 @@ impl ComprehensionCompiled {
     ) -> Result<ComprehensionCompiled, Diagnostic> {
         let fors = ClauseForCompiled::compile_clauses(clauses)?;
         Ok(ComprehensionCompiled::List(
-            Expr::compile(Expr::transform_locals_to_slots(expr, &fors.last().unwrap().local_names_to_indices))?,
+            Expr::compile(Expr::transform_locals_to_slots(
+                expr,
+                &fors.last().unwrap().local_names_to_indices,
+            ))?,
             fors,
         ))
     }
@@ -127,7 +130,10 @@ impl ComprehensionCompiled {
     ) -> Result<ComprehensionCompiled, Diagnostic> {
         let fors = ClauseForCompiled::compile_clauses(clauses)?;
         Ok(ComprehensionCompiled::Set(
-            Expr::compile(Expr::transform_locals_to_slots(expr, &fors.last().unwrap().local_names_to_indices))?,
+            Expr::compile(Expr::transform_locals_to_slots(
+                expr,
+                &fors.last().unwrap().local_names_to_indices,
+            ))?,
             fors,
         ))
     }
@@ -139,7 +145,10 @@ impl ComprehensionCompiled {
     ) -> Result<ComprehensionCompiled, Diagnostic> {
         let fors = ClauseForCompiled::compile_clauses(clauses)?;
         Ok(ComprehensionCompiled::Dict(
-            Expr::compile(Expr::transform_locals_to_slots(key, &fors.last().unwrap().local_names_to_indices))?,
+            Expr::compile(Expr::transform_locals_to_slots(
+                key,
+                &fors.last().unwrap().local_names_to_indices,
+            ))?,
             Expr::compile(Expr::transform_locals_to_slots(
                 value,
                 &fors.last().unwrap().local_names_to_indices,

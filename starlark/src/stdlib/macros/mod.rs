@@ -398,6 +398,32 @@ macro_rules! check_type {
     };
 }
 
+#[macro_export]
+macro_rules! to_type {
+    ($e:ident, $fn:expr, $ty:ident) => {
+        if let Ok(ref v) = $e.downcast_ref::<$ty>() {
+            Ok(v)
+        } else {
+            starlark_err!(
+                INCORRECT_PARAMETER_TYPE_ERROR_CODE,
+                format!(
+                    concat!(
+                        $fn,
+                        "() expect a {} as parameter while got a value of type {}."
+                    ),
+                    <$ty as TypedValue>::TYPE,
+                    $e.get_type(),
+                ),
+                format!(
+                    "type {} while expected {}",
+                    $e.get_type(),
+                    <$ty as TypedValue>::TYPE,
+                )
+            )
+        }
+    };
+}
+
 /// Convert 2 indices according to Starlark indices convertion for function like .index.
 ///
 /// # Parameters:

@@ -1,2 +1,10 @@
 [workspace]
 members = ["starlark", "starlark-repl", "starlark-test"]
+
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = "thin"
+

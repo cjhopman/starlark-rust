@@ -29,7 +29,7 @@ pub enum NoneType {
 impl TypedValue for NoneType {
     type Holder = ImmutableCell<Self>;
     const TYPE: &'static str = "NoneType";
-    
+
     fn new_value(self) -> Value {
         Value(ValueInner::None(ValueHolder::new(self)))
     }
@@ -47,11 +47,12 @@ impl TypedValue for NoneType {
         Box::new(iter::empty())
     }
 
-    fn to_repr(&self) -> String {
-        "None".to_owned()
+    fn collect_repr(&self, s: &mut String) {
+        s.push_str("None");
     }
+
     fn to_json(&self) -> String {
-        self.to_repr()
+        "None".to_string()
     }
     fn to_bool(&self) -> bool {
         false

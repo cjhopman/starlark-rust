@@ -126,7 +126,11 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone>
 
 impl CloneForCell for Dictionary {
     fn clone_for_cell(&self) -> Self {
-        unimplemented!("clone for dict")
+        let mut items = LinkedHashMap::with_capacity(self.content.len());
+        for (k, v) in &self.content {
+            items.insert(k.clone_for_cell(), v.shared());
+        }
+        Self{content: items}
     }
 }
 
@@ -145,19 +149,17 @@ impl TypedValue for Dictionary {
         )
     }
 
-    fn to_repr(&self) -> String {
-        format!(
-            "{{{}}}",
-            self.content
-                .iter()
-                .map(|(k, v)| format!("{}: {}", k.get_value().to_repr(), v.to_repr()))
-                .enumerate()
-                .fold("".to_string(), |accum, s| if s.0 == 0 {
-                    accum + &s.1
-                } else {
-                    accum + ", " + &s.1
-                })
-        )
+    fn collect_repr(&self, r :&mut String) {
+        r.push_str("{");
+        for (i, (name, value)) in self.content.iter().enumerate() {
+            if i != 0 {
+                r.push_str(", ");
+            }
+            name.get_value().collect_repr(r);
+            r.push_str(": ");
+            value.collect_repr(r);
+        }
+        r.push_str(")");
     }
 
     fn to_json(&self) -> String {

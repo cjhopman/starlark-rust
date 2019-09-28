@@ -824,7 +824,69 @@ where
     set_transformed(&lhs, context, v)
 }
 
+use std::collections::VecDeque;
+
 pub fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult {
+    let mut stmt: &AstStatement = stmt;
+    let mut r = Value::from(NoneType::None);
+    let mut stmts: Vec<&AstStatement> = Vec::new();
+    loop {
+        // println!("stmt {:?}", stmt.node);
+        match stmt.node {
+            Statement::If(ref cond, ref st) => {
+                if eval_expr(cond, context)?.to_bool() {
+                    stmt = st;
+                    continue;
+                } else {
+                    r = Value::new(NoneType::None);
+                }
+            }
+            Statement::IfElse(ref cond, ref st1, ref st2) => {
+                if eval_expr(cond, context)?.to_bool() {
+                    stmt = st1;
+                    continue;
+                } else {
+                    stmt = st2;
+                    continue;
+                }
+            }
+            Statement::Statements(ref v) => {
+                stmts.extend(v.iter().rev());
+            }
+            Statement::For(ref e1, ref e2, ref st) => {
+                let mut iterable = eval_expr(e2, context)?;
+                let mut result = Ok(Value::new(NoneType::None));
+                iterable.freeze_for_iteration();
+                for v in &t(iterable.iter(), &e2.span)? {
+                    set_expr(e1, context, v)?;
+                    match eval_stmt(st, context) {
+                        Err(EvalException::Break(..)) => break,
+                        Err(EvalException::Continue(..)) => (),
+                        Err(x) => {
+                            result = Err(x);
+                            break;
+                        }
+                        _ => (),
+                    }
+                }
+                iterable.unfreeze_for_iteration();
+                r = result?;
+            }
+            _ => r = eval_single_stmt(stmt, context)?,
+        }
+
+        // println!("pop");
+        match stmts.pop() {
+            Some(r) => stmt = r,
+            None => break,
+        }
+    }
+
+    Ok(r)
+}
+
+pub fn eval_single_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult {
+    // println!("st1: {}", stmt.node);
     match stmt.node {
         Statement::Break => Err(EvalException::Break(stmt.span)),
         Statement::Continue => Err(EvalException::Continue(stmt.span)),
@@ -842,14 +904,13 @@ pub fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult
         }
         Statement::Assign(ref lhs, AssignOp::Increment, ref rhs) => {
             //eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::add(&l, r))
-            
+
             eval_assign_modify(stmt, lhs, rhs, context, |mut l, r| {
                 match l.add_assign(r)? {
                     Some(v) => Ok(v),
                     None => Ok(l),
                 }
             })
-            
         }
         Statement::Assign(ref lhs, AssignOp::Decrement, ref rhs) => {
             eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::sub(&l, r))
@@ -866,46 +927,15 @@ pub fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult
         Statement::Assign(ref lhs, AssignOp::Percent, ref rhs) => {
             eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::percent(&l, r))
         }
-        Statement::If(ref cond, ref st) => {
-            if eval_expr(cond, context)?.to_bool() {
-                eval_stmt(st, context)
-            } else {
-                Ok(Value::new(NoneType::None))
-            }
-        }
-        Statement::IfElse(ref cond, ref st1, ref st2) => {
-            if eval_expr(cond, context)?.to_bool() {
-                eval_stmt(st1, context)
-            } else {
-                eval_stmt(st2, context)
-            }
-        }
-        Statement::For(ref e1, ref e2, ref st) => {
-            let mut iterable = eval_expr(e2, context)?;
-            let mut result = Ok(Value::new(NoneType::None));
-            iterable.freeze_for_iteration();
-            for v in &t(iterable.iter(), &e2.span)? {
-                set_expr(e1, context, v)?;
-                match eval_stmt(st, context) {
-                    Err(EvalException::Break(..)) => break,
-                    Err(EvalException::Continue(..)) => (),
-                    Err(x) => {
-                        result = Err(x);
-                        break;
-                    }
-                    _ => (),
-                }
-            }
-            iterable.unfreeze_for_iteration();
-            result
-        }
         Statement::DefCompiled(ref stmt) => {
             let mut p = Vec::new();
             for x in &stmt.params {
                 p.push(match x.node {
                     Parameter::Normal(ref n) => FunctionParameter::Normal(n.node.clone()),
                     Parameter::WithDefaultValue(ref n, ref v) => {
-                        FunctionParameter::WithDefaultValue(n.node.clone(), eval_expr(v, context)?)
+                        let mut v = eval_expr(v, context)?;
+                        v.freeze();
+                        FunctionParameter::WithDefaultValue(n.node.clone(), v)
                     }
                     Parameter::Args(ref n) => FunctionParameter::ArgsArray(n.node.clone()),
                     Parameter::KWArgs(ref n) => FunctionParameter::KWArgsDict(n.node.clone()),
@@ -937,13 +967,7 @@ pub fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult
             }
             Ok(Value::new(NoneType::None))
         }
-        Statement::Statements(ref v) => {
-            let mut r = Value::new(NoneType::None);
-            for stmt in v {
-                r = eval_stmt(stmt, context)?;
-            }
-            Ok(r)
-        }
+        _ => unreachable!(),
     }
 }
 

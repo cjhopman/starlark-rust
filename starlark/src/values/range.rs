@@ -52,17 +52,13 @@ impl Iterator for RangeIterator {
 impl TypedValue for Range {
     const TYPE: &'static str = "range";
 
-    fn to_str(&self) -> String {
-        self.to_repr()
-    }
-
-    fn to_repr(&self) -> String {
+    fn collect_repr(&self, s:&mut String)  {
         if self.step.get() != 1 {
-            format!("range({}, {}, {})", self.start, self.stop, self.step)
+            s.push_str(&format!("range({}, {}, {})", self.start, self.stop, self.step));
         } else if self.start != 0 {
-            format!("range({}, {})", self.start, self.stop)
+            s.push_str(&format!("range({}, {})", self.start, self.stop));
         } else {
-            format!("range({})", self.stop)
+            s.push_str(&format!("range({})", self.stop));
         }
     }
 

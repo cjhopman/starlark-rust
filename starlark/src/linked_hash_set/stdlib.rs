@@ -456,7 +456,7 @@ starlark_module! {global =>
         } else {
             starlark_err!(
                 SET_REMOVE_ELEMENT_NOT_FOUND_ERROR_CODE,
-                format!("Element '{}' not found in '{}'", needle, this.to_str()),
+                format!("Element '{}' not found in '{}'", needle, this.to_str_slow()),
                 "not found".to_owned()
             )
         }

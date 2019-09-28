@@ -32,20 +32,22 @@ impl fmt::Debug for Frame {
 /// Starlark call stack.
 #[derive(Clone, Debug, Default)]
 pub struct CallStack {
-    stack: Vec<Frame>,
+    // stack: Vec<Frame>,
 }
 
 impl CallStack {
     /// Push an element to the stack
     pub fn push(&mut self, function: Value, code_map: Arc<Mutex<CodeMap>>, pos: Pos) {
-        self.stack.push(Frame(function, code_map, pos));
+        // self.stack.push(Frame(function, code_map, pos));
     }
 
     /// Test if call stack contains a function with given id.
     pub fn contains(&self, function_id: FunctionId) -> bool {
+        false
+        /*
         self.stack
             .iter()
-            .any(|&Frame(ref f, _, _)| f.function_id() == function_id)
+            .any(|&Frame(ref f, _, _)| f.function_id() == function_id) */
     }
 
     /// Print call stack as multiline string
@@ -61,6 +63,7 @@ struct DisplayWithNewlineBefore<'a> {
 
 impl<'a> fmt::Display for DisplayWithNewlineBefore<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        /*
         for Frame(function, code_map, pos) in self.call_stack.stack.iter().rev() {
             let loc = { code_map.lock().unwrap().look_up_pos(*pos) };
             write!(
@@ -71,6 +74,7 @@ impl<'a> fmt::Display for DisplayWithNewlineBefore<'a> {
                 loc.position.line + 1, // line 1 is 0, so add 1 for human readable.
             )?;
         }
+        */
         Ok(())
     }
 }

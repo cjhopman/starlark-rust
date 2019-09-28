@@ -37,6 +37,13 @@ impl From<HashedValue> for Value {
 }
 
 impl HashedValue {
+    pub fn clone_for_cell(&self) -> Self {
+        Self{
+            hash: self.hash,
+            value: self.value.shared(),
+        }
+    }
+
     /// Returns error if the value is non hashable.
     pub fn new(value: Value) -> Result<HashedValue, ValueError> {
         let hash = value.get_hash()?;

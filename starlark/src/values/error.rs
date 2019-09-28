@@ -51,7 +51,10 @@ pub enum ValueError {
         right: Option<String>,
     },
     /// The operation is not supported for this type because type is not of a certain category.
-    TypeNotX { object_type: String, op: String },
+    TypeNotX {
+        object_type: String,
+        op: String,
+    },
     /// Division by 0
     DivisionByZero,
     /// Arithmetic operation results in integer overflow.

@@ -84,7 +84,7 @@ impl List {
             None => {
                 return Err(RuntimeError {
                     code: LIST_REMOVE_ELEMENT_NOT_FOUND_ERROR_CODE,
-                    message: format!("Element '{}' not found in '{}'", needle, self.to_str()),
+                    message: format!("Element '{}' not found in '{}'", needle, self.to_str_slow()),
                     label: "not found".to_owned(),
                 }
                 .into());
@@ -101,8 +101,8 @@ impl List {
 
 impl CloneForCell for List {
     fn clone_for_cell(&self) -> Self {
-        let vals : Vec<_> = self.content.iter().map(|e| e.shared()).collect();
-        Self{content: vals}
+        let vals: Vec<_> = self.content.iter().map(|e| e.shared()).collect();
+        Self { content: vals }
     }
 }
 
@@ -127,19 +127,18 @@ impl TypedValue for List {
     /// assert_eq!("[1]", Value::from(vec![1]).to_str());
     /// assert_eq!("[]", Value::from(Vec::<i64>::new()).to_str());
     /// ```
-    fn to_repr(&self) -> String {
-        format!(
-            "[{}]",
-            self.content
-                .iter()
-                .map(Value::to_repr)
-                .enumerate()
-                .fold("".to_string(), |accum, s| if s.0 == 0 {
-                    accum + &s.1
-                } else {
-                    accum + ", " + &s.1
-                },)
-        )
+    fn collect_repr(&self, s: &mut String) {
+        s.push('[');
+        let mut first = true;
+        for v in &self.content {
+            if first {
+                first = false;
+            } else {
+                s.push_str(", ");
+            }
+            v.collect_repr(s);
+        }
+        s.push(']');
     }
 
     fn to_json(&self) -> String {

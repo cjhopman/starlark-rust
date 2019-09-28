@@ -112,20 +112,18 @@ impl Parameter {
 
     pub fn compile(param: AstParameter) -> Result<AstParameter, Diagnostic> {
         match param.node {
-            Parameter::WithDefaultValue(s, expr) => Ok(Spanned{
+            Parameter::WithDefaultValue(s, expr) => Ok(Spanned {
                 span: param.span,
-                node: Parameter::WithDefaultValue(s, Expr::compile(expr)?)
+                node: Parameter::WithDefaultValue(s, Expr::compile(expr)?),
             }),
-            _ => Ok(param)
+            _ => Ok(param),
         }
     }
 }
 
 #[doc(hidden)]
 #[derive(Debug, Clone)]
-pub struct AstListLiteral {
-
-}
+pub struct AstListLiteral {}
 
 #[doc(hidden)]
 #[derive(Debug, Clone)]
@@ -374,23 +372,27 @@ impl Expr {
                         .collect::<Result<_, _>>()?,
                 ),
                 Expr::List(exprs) => {
-                    let items : Vec<_> =  exprs
+                    let items: Vec<_> = exprs
                         .into_iter()
                         .map(Expr::compile)
                         .collect::<Result<_, _>>()?;
 
                     if items.iter().all(|e| e.is_literal()) {
-                        let vals : Vec<_> = items.iter().map(|e| {
-                            match e.node {
+                        let vals: Vec<_> = items
+                            .iter()
+                            .map(|e| match e.node {
                                 Expr::CompiledLiteral(_, ref v) => v.clone(),
-                                _ => unreachable!()
-                            }
-                        }).collect();
-                        Expr::CompiledLiteral(AstLiteral::ListLiteral(AstListLiteral{}), Value::from(vals))
+                                _ => unreachable!(),
+                            })
+                            .collect();
+                        Expr::CompiledLiteral(
+                            AstLiteral::ListLiteral(AstListLiteral {}),
+                            Value::from(vals),
+                        )
                     } else {
-                        Expr::List(items)   
+                        Expr::List(items)
                     }
-                },
+                }
                 Expr::Set(exprs) => Expr::Set(
                     exprs
                         .into_iter()
@@ -446,19 +448,16 @@ impl Expr {
                 Expr::DictComprehension((key, value), clauses) => Expr::ComprehensionCompiled(
                     ComprehensionCompiled::new_dict(key, value, clauses)?,
                 ),
-                Expr::Literal(AstLiteral::StringLiteral(s)) => Expr::CompiledLiteral(
-                    AstLiteral::StringLiteral(s.clone()),
-                    Value::new(s.node)
-                ),
-                Expr::Literal(AstLiteral::IntLiteral(i)) => Expr::CompiledLiteral(
-                    AstLiteral::IntLiteral(i),
-                    Value::new(i.node)
-                ),
+                Expr::Literal(AstLiteral::StringLiteral(s)) => {
+                    Expr::CompiledLiteral(AstLiteral::StringLiteral(s.clone()), Value::new(s.node))
+                }
+                Expr::Literal(AstLiteral::IntLiteral(i)) => {
+                    Expr::CompiledLiteral(AstLiteral::IntLiteral(i), Value::new(i.node))
+                }
                 Expr::Literal(AstLiteral::ListLiteral(_)) => unreachable!(),
                 Expr::CompiledLiteral(..) => unreachable!(),
                 Expr::ComprehensionCompiled(..) => unreachable!(),
-                e @ Expr::Slot(..)
-                | e @ Expr::Identifier(..) => e,
+                e @ Expr::Slot(..) | e @ Expr::Identifier(..) => e,
             },
         }))
     }
@@ -882,13 +881,14 @@ impl Display for Expr {
                 f.write_str("}}")
             }
             Expr::ComprehensionCompiled(ref c) => fmt::Display::fmt(&c.to_raw(), f),
-            Expr::Literal(AstLiteral::IntLiteral(ref i)) | Expr::CompiledLiteral(AstLiteral::IntLiteral(ref i), _) => i.node.fmt(f),
+            Expr::Literal(AstLiteral::IntLiteral(ref i))
+            | Expr::CompiledLiteral(AstLiteral::IntLiteral(ref i), _) => i.node.fmt(f),
             Expr::Literal(AstLiteral::StringLiteral(ref s)) => fmt_string_literal(f, &s.node),
             Expr::CompiledLiteral(AstLiteral::StringLiteral(ref s), _) => {
                 write!(f, "cmp<")?;
                 fmt_string_literal(f, &s.node)?;
                 write!(f, ">")
-            },
+            }
             Expr::Literal(AstLiteral::ListLiteral(_)) => panic!("this shouldn't exist"),
             Expr::CompiledLiteral(AstLiteral::ListLiteral(_), ref v) => write!(f, "cmp<{}>", v),
         }

@@ -15,6 +15,8 @@
 //! Methods for the `dict` type.
 
 use crate::values::dict::Dictionary;
+use crate::values::function::KwargsDict;
+
 use crate::values::error::*;
 use crate::values::none::NoneType;
 use crate::values::*;
@@ -26,6 +28,93 @@ macro_rules! ok {
     ($e:expr) => {
         return Ok(Value::from($e));
     };
+}
+
+pub mod kwargs {
+    use super::*;
+    starlark_module! {global =>
+        kwargsdict.update(this, ?#pairs, **kwargs) {
+            if let Some(pairs) = pairs {
+                match pairs.get_type() {
+                    "list" => for v in &pairs.iter()? {
+                        if v.length()? != 2 {
+                            starlark_err!(
+                                INCORRECT_PARAMETER_TYPE_ERROR_CODE,
+                                concat!(
+                                    "dict.update expect a list of pairsor a dictionary as first ",
+                                    "argument, got a list of non-pairs."
+                                ).to_owned(),
+                                "list of non-pairs".to_owned()
+                            )
+                        }
+                        this.set_at(v.at(Value::new(0))?, v.at(Value::new(1))?)?;
+                    },
+                    "kwargsdict" => for k in &pairs.iter()? {
+                        this.set_at(k.clone(), pairs.at(k)?)?
+                    },
+                    "dict" => for k in &pairs.iter()? {
+                        this.set_at(k.clone(), pairs.at(k)?)?
+                    },
+                    x => starlark_err!(
+                        INCORRECT_PARAMETER_TYPE_ERROR_CODE,
+                        format!(
+                            concat!(
+                                "dict.update expect a list or a dictionary as first argument, ",
+                                "got a value of type {}."
+                            ),
+                            x
+                        ),
+                        format!("type {} while expected list or dict", x)
+                    )
+                }
+            }
+
+            for (k, v) in kwargs {
+                this.set_at(k.into(), v)?;
+            }
+            Ok(Value::new(NoneType::None))
+        }
+
+        kwargsdict.setdefault(this, #key, #default = NoneType::None) {
+            {
+                let this = this.downcast_ref::<KwargsDict>().unwrap();
+                if let Ok(r) = this.at(key.clone()) {
+                    return Ok(r)
+                }
+            }
+            let mut this = this.downcast_mut::<KwargsDict>()?.unwrap();
+            this.insert(key, default.clone())?;
+            Ok(default)
+        }
+
+        kwargsdict.items(this) {
+            let this = this.downcast_ref::<KwargsDict>().unwrap();
+            ok!(this.items())
+        }
+
+
+        kwargsdict.get(this, #key, #default = NoneType::None) {
+            match this.at(key) {
+                Err(ValueError::KeyNotFound(..)) => Ok(default),
+                x => x
+            }
+        }
+
+        kwargsdict.pop(this, #key, #default = NoneType::None) {
+            let mut this = this.downcast_mut::<KwargsDict>()?.unwrap();
+            match this.remove(&key)? {
+                Some(x) => Ok(x),
+                None =>  Ok(default)
+            }
+        }
+
+        kwargsdict.keys(this) {
+            let v : Vec<Value> = this.iter()?.iter().collect();
+            ok!(v)
+        }
+
+
+    }
 }
 
 starlark_module! {global =>
@@ -306,6 +395,9 @@ starlark_module! {global =>
                         )
                     }
                     this.set_at(v.at(Value::new(0))?, v.at(Value::new(1))?)?;
+                },
+                "kwargsdict" => for k in &pairs.iter()? {
+                    this.set_at(k.clone(), pairs.at(k)?)?
                 },
                 "dict" => for k in &pairs.iter()? {
                     this.set_at(k.clone(), pairs.at(k)?)?

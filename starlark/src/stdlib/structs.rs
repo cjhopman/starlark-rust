@@ -44,18 +44,17 @@ impl TypedValue for StarlarkStruct {
         Box::new(self.fields.values().cloned())
     }
 
-    fn to_repr(&self) -> String {
-        let mut r = "struct(".to_owned();
+    fn collect_repr(&self, r: &mut String) {
+        r.push_str("struct(");
         for (i, (name, value)) in self.fields.iter().enumerate() {
             if i != 0 {
                 r.push_str(", ");
             }
             r.push_str(&name);
             r.push_str("=");
-            r.push_str(&value.to_repr());
+            value.collect_repr(r);
         }
         r.push_str(")");
-        r
     }
 
     const TYPE: &'static str = "struct";
@@ -84,7 +83,7 @@ impl TypedValue for StarlarkStruct {
             Some(v) => Ok(v.clone()),
             None => Err(ValueError::OperationNotSupported {
                 op: attribute.to_owned(),
-                left: self.to_repr(),
+                left: self.to_repr_slow(),
                 right: None,
             }),
         }

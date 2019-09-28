@@ -90,15 +90,16 @@ use codemap_diagnostic::Level;
 use linked_hash_map::LinkedHashMap;
 use std::any::Any;
 use std::borrow::BorrowMut;
+use std::borrow::Cow;
 use std::cell::{RefCell, RefMut};
 use std::cmp::Ordering;
 use std::fmt;
 use std::marker;
 use std::rc::Rc;
 
+pub use mutability::CloneForCell;
 pub use mutability::ImmutableCell;
 pub use mutability::MutableCell;
-pub use mutability::CloneForCell;
 
 /// ValueInner wraps the actual value or a memory pointer
 /// to the actual value for complex type.
@@ -226,7 +227,9 @@ pub struct FunctionId(pub DataPtr);
 impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
     fn shared(&self) -> Option<Value> {
         if T::Holder::MUTABLE {
-            let rc : Rc<dyn ValueHolderDyn> = Rc::new(ValueHolder::<T>{content: self.content.shared()});
+            let rc: Rc<dyn ValueHolderDyn> = Rc::new(ValueHolder::<T> {
+                content: self.content.shared(),
+            });
             // println!("make_shared {}", self.to_repr());
             Some(Value(ValueInner::Other(rc)))
         } else {
@@ -282,16 +285,20 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
         self.content.unfreeze_for_iteration();
     }
 
-    fn to_str(&self) -> String {
-        self.content.borrow().to_str()
+    fn collect_str(&self, s: &mut String) {
+        self.content.borrow().collect_str(s);
     }
 
-    fn to_repr(&self) -> String {
-        self.content.borrow().to_repr()
+    fn collect_repr(&self, s: &mut String) {
+        self.content.borrow().collect_repr(s);
     }
 
     fn to_json(&self) -> String {
         self.content.borrow().to_json()
+    }
+
+    fn find_in<'a>(&'_ self, map: &'a LinkedHashMap<String, Value>) -> Option<&'a Value> {
+        self.content.borrow().find_in(map)
     }
 
     fn get_type(&self) -> &'static str {
@@ -417,7 +424,7 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
         // must explicitly check for mutability, otherwise `borrow_mut` below will fail
         if !T::Holder::MUTABLE {
             return Err(ValueError::OperationNotSupported {
-                op: format!(".{} =", attribute),
+                op: format!("immutable .{} =", attribute),
                 left: self.get_type().to_owned(),
                 right: None,
             });
@@ -456,10 +463,7 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
     }
 
     fn add(&self, other: Value) -> Result<Value, ValueError> {
-        match other.downcast_ref::<T>() {
-            Some(other) => self.content.borrow().add(&*other).map(Value::new),
-            None => Err(ValueError::IncorrectParameterType),
-        }
+        self.content.borrow().add_special(other)
     }
 
     fn sub(&self, other: Value) -> Result<Value, ValueError> {
@@ -514,11 +518,13 @@ trait ValueHolderDyn {
 
     fn unfreeze_for_iteration(&self);
 
-    fn to_str(&self) -> String;
+    fn collect_str(&self, s: &mut String);
 
-    fn to_repr(&self) -> String;
+    fn collect_repr(&self, s: &mut String);
 
     fn to_json(&self) -> String;
+
+    fn find_in<'a>(&'_ self, map: &'a LinkedHashMap<String, Value>) -> Option<&'a Value>;
 
     fn get_type(&self) -> &'static str;
 
@@ -634,18 +640,36 @@ pub trait TypedValue: Sized + 'static {
         None
     }
 
+    fn to_str_slow(&self) -> String {
+        let mut s = String::new();
+        self.collect_str(&mut s);
+        s
+    }
+
+    fn to_repr_slow(&self) -> String {
+        let mut s = String::new();
+        self.collect_repr(&mut s);
+        s
+    }
+
     /// Return a string describing of self, as returned by the str() function.
-    fn to_str(&self) -> String {
-        self.to_repr()
+    fn collect_str(&self, collector: &mut String) {
+        self.collect_repr(collector);
     }
 
     /// Return a string representation of self, as returned by the repr() function.
-    fn to_repr(&self) -> String {
-        format!("<{}>", Self::TYPE)
+    fn collect_repr(&self, collector: &mut String) {
+        collector.push('<');
+        collector.push_str(&Self::TYPE);
+        collector.push('>');
     }
 
     fn to_json(&self) -> String {
         panic!("unsupported for type {}", Self::TYPE)
+    }
+
+    fn find_in<'a>(&'_ self, map: &'a LinkedHashMap<String, Value>) -> Option<&'a Value> {
+        panic!("unsupported as key for type {}", Self::TYPE)
     }
 
     /// Convert self to a Boolean truth value, as returned by the bool() function.
@@ -959,6 +983,13 @@ pub trait TypedValue: Sized + 'static {
         })
     }
 
+    fn add_special(&self, other: Value) -> Result<Value, ValueError> {
+        match other.downcast_ref::<Self>() {
+            Some(other) => self.add(&*other).map(Value::new),
+            None => Err(ValueError::IncorrectParameterType),
+        }
+    }
+
     fn add_assign(&mut self, _other: &Self) -> Result<(), ValueError> {
         Err(ValueError::OperationNotSupported {
             op: "+=".to_owned(),
@@ -1094,11 +1125,21 @@ impl Value {
     pub fn unfreeze_for_iteration(&mut self) {
         self.value_holder().unfreeze_for_iteration()
     }
+    pub fn collect_str(&self, s: &mut String) {
+        self.value_holder().collect_str(s);
+    }
     pub fn to_str(&self) -> String {
-        self.value_holder().to_str()
+        let mut s = String::new();
+        self.collect_str(&mut s);
+        s
+    }
+    pub fn collect_repr(&self, s: &mut String) {
+        self.value_holder().collect_repr(s);
     }
     pub fn to_repr(&self) -> String {
-        self.value_holder().to_repr()
+        let mut s = String::new();
+        self.collect_repr(&mut s);
+        s
     }
     pub fn to_json(&self) -> String {
         self.value_holder().to_json()
@@ -1421,10 +1462,7 @@ pub mod range;
 pub mod string;
 pub mod tuple;
 
-use crate::values::mutability::{
-    ContentCell,
-    RefOrRef,
-};
+use crate::values::mutability::{ContentCell, RefOrRef};
 use crate::values::none::NoneType;
 
 #[cfg(test)]
@@ -1470,8 +1508,8 @@ mod tests {
 
         /// Define the NoneType type
         impl TypedValue for WrappedNumber {
-            fn to_repr(&self) -> String {
-                format!("{:?}", self)
+            fn collect_repr(&self, s: &mut String) {
+                s.push_str(&self.0.to_string());
             }
             const TYPE: &'static str = "WrappedNumber";
             fn to_bool(&self) -> bool {

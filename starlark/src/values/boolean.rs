@@ -34,15 +34,15 @@ impl TypedValue for bool {
         Value(ValueInner::Bool(ValueHolder::new(self)))
     }
 
-    fn to_repr(&self) -> String {
+    fn collect_repr(&self, s: &mut String) {
         if *self {
-            "True".to_owned()
+            s.push_str("True")
         } else {
-            "False".to_owned()
+            s.push_str("False")
         }
     }
     fn to_json(&self) -> String {
-        self.to_repr()
+        self.to_repr_slow()
     }
     fn to_int(&self) -> Result<i64, ValueError> {
         Ok(if *self { 1 } else { 0 })

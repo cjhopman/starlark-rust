@@ -251,6 +251,12 @@ starlark_module! {global_functions =>
                         map.set_at(k, v)?;
                     }
                 },
+                "kwargsdict" => {
+                    for k in &a.iter()? {
+                        let v = a.at(k.clone())?;
+                        map.set_at(k, v)?;
+                    }
+                },
                 _ => {
                    for el in &a.iter()? {
                        match el.iter() {
@@ -961,7 +967,9 @@ pub fn global_environment() -> Environment {
     env.set("None", Value::new(NoneType::None)).unwrap();
     env.set("True", Value::new(true)).unwrap();
     env.set("False", Value::new(false)).unwrap();
-    dict::global(list::global(string::global(global_functions(env))))
+    dict::kwargs::global(dict::global(list::global(string::global(
+        global_functions(env),
+    ))))
 }
 
 /// Default global environment with added non-standard `struct` and `set` extensions.
