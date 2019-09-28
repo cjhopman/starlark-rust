@@ -14,15 +14,15 @@
 
 //! Simple implementation of `LinkedHashSet`.
 
-use linked_hash_map::{Entry, LinkedHashMap};
+use indexmap::{map::Entry, IndexMap};
 use std::hash::Hash;
 
-/// `LinkedHashSet` is a tiny wrapper around `LinkedHashMap`.
+/// `LinkedHashSet` is a tiny wrapper around `IndexMap`.
 ///
-/// Using `LinkedHashMap` directly to avoid adding extra dependency.
+/// Using `IndexMap` directly to avoid adding extra dependency.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub(crate) struct LinkedHashSet<K: Eq + Hash> {
-    map: LinkedHashMap<K, ()>,
+    map: IndexMap<K, ()>,
 }
 
 impl<K: Eq + Hash> Default for LinkedHashSet<K> {
@@ -34,13 +34,13 @@ impl<K: Eq + Hash> Default for LinkedHashSet<K> {
 impl<K: Eq + Hash> LinkedHashSet<K> {
     pub fn new() -> Self {
         LinkedHashSet {
-            map: LinkedHashMap::new(),
+            map: IndexMap::new(),
         }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
         LinkedHashSet {
-            map: LinkedHashMap::with_capacity(capacity),
+            map: IndexMap::with_capacity(capacity),
         }
     }
 
@@ -105,18 +105,14 @@ impl<K: Eq + Hash> LinkedHashSet<K> {
         self.len() <= other.len() && self.iter().all(|k| other.contains(k))
     }
 
-    pub fn pop_front(&mut self) -> Option<K> {
-        self.map.pop_front().map(|(k, ())| k)
-    }
-
     pub fn pop_back(&mut self) -> Option<K> {
-        self.map.pop_back().map(|(k, ())| k)
+        self.map.pop().map(|(k, ())| k)
     }
 }
 
 impl<'a, K: Hash + Eq> IntoIterator for &'a LinkedHashSet<K> {
     type Item = &'a K;
-    type IntoIter = linked_hash_map::Keys<'a, K, ()>;
+    type IntoIter = indexmap::map::Keys<'a, K, ()>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.map.keys()

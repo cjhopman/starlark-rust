@@ -87,7 +87,7 @@ use crate::eval::call_stack::CallStack;
 use crate::values::error::ValueError;
 use crate::values::iter::{FakeTypedIterable, RefIterable, TypedIterable};
 use codemap_diagnostic::Level;
-use linked_hash_map::LinkedHashMap;
+use indexmap::IndexMap;
 use std::any::Any;
 use std::borrow::BorrowMut;
 use std::borrow::Cow;
@@ -297,7 +297,7 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
         self.content.borrow().to_json()
     }
 
-    fn find_in<'a>(&'_ self, map: &'a LinkedHashMap<String, Value>) -> Option<&'a Value> {
+    fn find_in<'a>(&'_ self, map: &'a IndexMap<String, Value>) -> Option<&'a Value> {
         self.content.borrow().find_in(map)
     }
 
@@ -359,7 +359,7 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
         call_stack: &CallStack,
         type_values: TypeValues,
         positional: Vec<Value>,
-        named: LinkedHashMap<String, Value>,
+        named: IndexMap<String, Value>,
         args: Option<Value>,
         kwargs: Option<Value>,
     ) -> ValueResult {
@@ -524,7 +524,7 @@ trait ValueHolderDyn {
 
     fn to_json(&self) -> String;
 
-    fn find_in<'a>(&'_ self, map: &'a LinkedHashMap<String, Value>) -> Option<&'a Value>;
+    fn find_in<'a>(&'_ self, map: &'a IndexMap<String, Value>) -> Option<&'a Value>;
 
     fn get_type(&self) -> &'static str;
 
@@ -544,7 +544,7 @@ trait ValueHolderDyn {
         call_stack: &CallStack,
         type_values: TypeValues,
         positional: Vec<Value>,
-        named: LinkedHashMap<String, Value>,
+        named: IndexMap<String, Value>,
         args: Option<Value>,
         kwargs: Option<Value>,
     ) -> ValueResult;
@@ -668,7 +668,7 @@ pub trait TypedValue: Sized + 'static {
         panic!("unsupported for type {}", Self::TYPE)
     }
 
-    fn find_in<'a>(&'_ self, map: &'a LinkedHashMap<String, Value>) -> Option<&'a Value> {
+    fn find_in<'a>(&'_ self, map: &'a IndexMap<String, Value>) -> Option<&'a Value> {
         panic!("unsupported as key for type {}", Self::TYPE)
     }
 
@@ -747,7 +747,7 @@ pub trait TypedValue: Sized + 'static {
         _call_stack: &CallStack,
         _type_values: TypeValues,
         _positional: Vec<Value>,
-        _named: LinkedHashMap<String, Value>,
+        _named: IndexMap<String, Value>,
         _args: Option<Value>,
         _kwargs: Option<Value>,
     ) -> ValueResult {
@@ -1172,7 +1172,7 @@ impl Value {
         call_stack: &CallStack,
         type_values: TypeValues,
         positional: Vec<Value>,
-        named: LinkedHashMap<String, Value>,
+        named: IndexMap<String, Value>,
         args: Option<Value>,
         kwargs: Option<Value>,
     ) -> ValueResult {

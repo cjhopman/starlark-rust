@@ -88,7 +88,7 @@ impl FunctionArg {
     pub fn into_kw_args_dict<T: TryParamConvertFromValue>(
         self,
         param_name: &'static str,
-    ) -> Result<LinkedHashMap<String, T>, ValueError> {
+    ) -> Result<IndexMap<String, T>, ValueError> {
         match self {
             FunctionArg::KWArgsDict(dict) => dict.into_hash_map(),
             _ => Err(ValueError::IncorrectParameterType),
@@ -249,7 +249,11 @@ fn repr_slow(function_type: &FunctionType, signature: &[FunctionParameter]) -> S
     s
 }
 
-pub(crate) fn collect_repr(function_type: &FunctionType, signature: &[FunctionParameter], collector: &mut String) {
+pub(crate) fn collect_repr(
+    function_type: &FunctionType,
+    signature: &[FunctionParameter],
+    collector: &mut String,
+) {
     let v: Vec<String> = signature
         .iter()
         .map(|x| -> String {
@@ -267,7 +271,11 @@ pub(crate) fn collect_repr(function_type: &FunctionType, signature: &[FunctionPa
     collector.push_str(&format!("{}({})", function_type.to_repr(), v.join(", ")));
 }
 
-pub(crate) fn collect_str(function_type: &FunctionType, signature: &[FunctionParameter], collector: &mut String) {
+pub(crate) fn collect_str(
+    function_type: &FunctionType,
+    signature: &[FunctionParameter],
+    collector: &mut String,
+) {
     let v: Vec<String> = signature
         .iter()
         .map(|x| -> String {
@@ -516,7 +524,7 @@ impl Iterator<Item=Value> for KwargsIter {
 pub struct KwargsDict {
     index: usize,
     // TODO: mark taken?
-    named: LinkedHashMap<String, Value>,
+    named: IndexMap<String, Value>,
     kwargs_arg: Option<Value>,
 }
 
@@ -555,7 +563,7 @@ impl CloneForCell for KwargsDict {
             )
         });
 
-        let mut named = LinkedHashMap::with_capacity(self.named.len());
+        let mut named = IndexMap::with_capacity(self.named.len());
         for (k, v) in &self.named {
             named.insert(k.clone(), v.shared());
         }
@@ -607,7 +615,7 @@ impl KwargsDict {
         unreachable!()
     }
 
-    fn new(named: LinkedHashMap<String, Value>, kwargs_arg: Option<Value>) -> Self {
+    fn new(named: IndexMap<String, Value>, kwargs_arg: Option<Value>) -> Self {
         Self {
             index: 0,
             named,
@@ -636,7 +644,7 @@ impl KwargsDict {
         }
         None
     }
-    pub fn insert(&mut self, key: Value, value: Value) -> Result<Value, ValueError> {       
+    pub fn insert(&mut self, key: Value, value: Value) -> Result<Value, ValueError> {
         if let Some(ref mut kwargs) = self.kwargs_arg {
             self.named.remove(&key.to_string());
             let key1 = &key;
@@ -644,15 +652,15 @@ impl KwargsDict {
             let val1 = &value;
             let val2 = &value;
             return Self::map_kwargs_arg_mut(
-                kwargs, 
-                |dict| {
-                    dict.insert(key1.clone(), val1.clone())
-                },
-                |kwargsdict| {
-                    kwargsdict.insert(key2.clone(), val2.clone())
-                });
+                kwargs,
+                |dict| dict.insert(key1.clone(), val1.clone()),
+                |kwargsdict| kwargsdict.insert(key2.clone(), val2.clone()),
+            );
         } else {
-            return Ok(self.named.insert(key.to_string(), value).unwrap_or(Value::new(NoneType::None)));
+            return Ok(self
+                .named
+                .insert(key.to_string(), value)
+                .unwrap_or(Value::new(NoneType::None)));
         }
     }
 
@@ -666,8 +674,8 @@ impl KwargsDict {
 
     fn into_hash_map<T: TryParamConvertFromValue>(
         mut self,
-    ) -> Result<LinkedHashMap<String, T>, ValueError> {
-        let mut r = LinkedHashMap::with_capacity(self.remaining());
+    ) -> Result<IndexMap<String, T>, ValueError> {
+        let mut r = IndexMap::with_capacity(self.remaining());
 
         for (k, v) in self.named.into_iter() {
             let v: Result<_, _> = T::try_from(v);
@@ -840,7 +848,7 @@ impl<'a> ParameterParser<'a> {
         signature: &'a [FunctionParameter],
         function_type: &'a FunctionType,
         positional: Vec<Value>,
-        named: LinkedHashMap<String, Value>,
+        named: IndexMap<String, Value>,
         args: Option<Value>,
         kwargs_arg: Option<Value>,
     ) -> Result<ParameterParser<'a>, ValueError> {
@@ -930,16 +938,13 @@ impl<'a> ParameterParser<'a> {
 
     pub struct KwargsDict {
         index: usize,
-        named: LinkedHashMap<String, Value>,
+        named: IndexMap<String, Value>,
         kwargs_arg: Option<Value>,
 
     */
 
     pub fn next_kwargs_dict(&mut self) -> KwargsDict {
-        mem::replace(
-            &mut self.kwargs,
-            KwargsDict::new(LinkedHashMap::new(), None),
-        )
+        mem::replace(&mut self.kwargs, KwargsDict::new(IndexMap::new(), None))
     }
 
     pub fn check_no_more_args(&mut self) -> Result<(), ValueError> {
@@ -980,11 +985,11 @@ impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> Ty
         Box::new(iter::empty())
     }
 
-    fn collect_str(&self, s:&mut String) {
+    fn collect_str(&self, s: &mut String) {
         collect_str(&self.function_type, &self.signature, s);
     }
 
-    fn collect_repr(&self, s:&mut String) {
+    fn collect_repr(&self, s: &mut String) {
         collect_repr(&self.function_type, &self.signature, s);
     }
 
@@ -995,7 +1000,7 @@ impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> Ty
         call_stack: &CallStack,
         type_values: TypeValues,
         positional: Vec<Value>,
-        named: LinkedHashMap<String, Value>,
+        named: IndexMap<String, Value>,
         args: Option<Value>,
         kwargs: Option<Value>,
     ) -> ValueResult {
@@ -1039,7 +1044,7 @@ impl TypedValue for WrappedMethod {
         call_stack: &CallStack,
         type_values: TypeValues,
         positional: Vec<Value>,
-        named: LinkedHashMap<String, Value>,
+        named: IndexMap<String, Value>,
         args: Option<Value>,
         kwargs: Option<Value>,
     ) -> ValueResult {

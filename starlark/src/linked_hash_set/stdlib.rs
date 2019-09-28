@@ -413,8 +413,6 @@ starlark_module! {global =>
         let index = index as usize;
         let ret = if index == (length - 1) as usize {
             this.pop_back()
-        } else if index == 0 {
-            this.pop_front()
         } else {
             let ret = this.get_content().iter().nth(index).cloned();
             let values: Vec<_> = this.get_content().iter().take(index).chain(this.get_content().iter().skip(index + 1)).cloned().collect();

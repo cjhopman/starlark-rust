@@ -17,7 +17,7 @@
 use crate::values::dict::Dictionary;
 use crate::values::error::ValueError;
 use crate::values::{TypedValue, Value};
-use linked_hash_map::LinkedHashMap;
+use indexmap::IndexMap;
 use std::convert::TryInto;
 use std::hash::Hash;
 
@@ -38,12 +38,12 @@ impl<T: TryParamConvertFromValue> TryParamConvertFromValue for Vec<T> {
 }
 
 impl<K: TryParamConvertFromValue + Hash + Eq, V: TryParamConvertFromValue> TryParamConvertFromValue
-    for LinkedHashMap<K, V>
+    for IndexMap<K, V>
 {
     fn try_from(source: Value) -> Result<Self, ValueError> {
         match source.downcast_ref::<Dictionary>() {
             Some(dict) => {
-                let mut r = LinkedHashMap::new();
+                let mut r = IndexMap::new();
                 for (k, v) in dict.get_content() {
                     r.insert(K::try_from(k.get_value().clone())?, V::try_from(v.clone())?);
                 }

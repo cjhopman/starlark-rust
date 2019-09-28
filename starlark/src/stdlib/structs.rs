@@ -16,11 +16,11 @@
 
 use crate::values::error::ValueError;
 use crate::values::*;
-use linked_hash_map::LinkedHashMap;
+use indexmap::IndexMap;
 
 /// `struct()` implementation.
 pub struct StarlarkStruct {
-    pub fields: LinkedHashMap<String, Value>,
+    pub fields: IndexMap<String, Value>,
 }
 
 impl TypedValue for StarlarkStruct {

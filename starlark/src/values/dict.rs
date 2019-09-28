@@ -18,7 +18,7 @@ use crate::values::hashed_value::HashedValue;
 use crate::values::iter::TypedIterable;
 use crate::values::none::NoneType;
 use crate::values::*;
-use linked_hash_map::LinkedHashMap; // To preserve insertion order
+use indexmap::IndexMap; // To preserve insertion order
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::hash::Hash;
@@ -26,13 +26,13 @@ use std::hash::Hash;
 /// The Dictionary type
 #[derive(Default)]
 pub struct Dictionary {
-    content: LinkedHashMap<HashedValue, Value>,
+    content: IndexMap<HashedValue, Value>,
 }
 
 impl Dictionary {
     pub fn new_typed() -> Dictionary {
         Dictionary {
-            content: LinkedHashMap::new(),
+            content: IndexMap::new(),
         }
     }
 
@@ -40,7 +40,7 @@ impl Dictionary {
         Value::new(Dictionary::new_typed())
     }
 
-    pub fn get_content(&self) -> &LinkedHashMap<HashedValue, Value> {
+    pub fn get_content(&self) -> &IndexMap<HashedValue, Value> {
         &self.content
     }
 
@@ -54,10 +54,6 @@ impl Dictionary {
 
     pub fn remove(&mut self, key: &Value) -> Result<Option<Value>, ValueError> {
         Ok(self.remove_hashed(&HashedValue::new(key.clone())?))
-    }
-
-    pub fn pop_front(&mut self) -> Option<(HashedValue, Value)> {
-        self.content.pop_front()
     }
 
     pub fn items(&self) -> Vec<(Value, Value)> {
@@ -95,7 +91,7 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
 
     fn try_from(a: HashMap<T1, T2>) -> Result<Dictionary, ValueError> {
         let mut result = Dictionary {
-            content: LinkedHashMap::new(),
+            content: IndexMap::new(),
         };
         for (k, v) in a.iter() {
             result
@@ -106,14 +102,14 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
     }
 }
 
-impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone>
-    TryFrom<LinkedHashMap<T1, T2>> for Dictionary
+impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone> TryFrom<IndexMap<T1, T2>>
+    for Dictionary
 {
     type Error = ValueError;
 
-    fn try_from(a: LinkedHashMap<T1, T2>) -> Result<Dictionary, ValueError> {
+    fn try_from(a: IndexMap<T1, T2>) -> Result<Dictionary, ValueError> {
         let mut result = Dictionary {
-            content: LinkedHashMap::new(),
+            content: IndexMap::new(),
         };
         for (k, v) in a.iter() {
             result
@@ -126,11 +122,11 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone>
 
 impl CloneForCell for Dictionary {
     fn clone_for_cell(&self) -> Self {
-        let mut items = LinkedHashMap::with_capacity(self.content.len());
+        let mut items = IndexMap::with_capacity(self.content.len());
         for (k, v) in &self.content {
             items.insert(k.clone_for_cell(), v.shared());
         }
-        Self{content: items}
+        Self { content: items }
     }
 }
 
@@ -149,7 +145,7 @@ impl TypedValue for Dictionary {
         )
     }
 
-    fn collect_repr(&self, r :&mut String) {
+    fn collect_repr(&self, r: &mut String) {
         r.push_str("{");
         for (i, (name, value)) in self.content.iter().enumerate() {
             if i != 0 {
@@ -235,7 +231,7 @@ impl TypedValue for Dictionary {
 
     fn add(&self, other: &Dictionary) -> Result<Dictionary, ValueError> {
         let mut result = Dictionary {
-            content: LinkedHashMap::new(),
+            content: IndexMap::new(),
         };
         for (k, v) in &self.content {
             result.content.insert(k.clone(), v.clone());
@@ -263,12 +259,12 @@ impl<T1: Into<Value> + Eq + Hash + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
     }
 }
 
-impl<T1: Into<Value> + Eq + Hash + Clone, T2: Into<Value> + Eq + Clone>
-    TryFrom<LinkedHashMap<T1, T2>> for Value
+impl<T1: Into<Value> + Eq + Hash + Clone, T2: Into<Value> + Eq + Clone> TryFrom<IndexMap<T1, T2>>
+    for Value
 {
     type Error = ValueError;
 
-    fn try_from(a: LinkedHashMap<T1, T2>) -> Result<Value, ValueError> {
+    fn try_from(a: IndexMap<T1, T2>) -> Result<Value, ValueError> {
         Ok(Value::new(dict::Dictionary::try_from(a)?))
     }
 }
@@ -279,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_mutate_dict() {
-        let mut map = LinkedHashMap::<HashedValue, Value>::new();
+        let mut map = IndexMap::<HashedValue, Value>::new();
         map.insert(HashedValue::new(Value::from(1)).unwrap(), Value::from(2));
         map.insert(HashedValue::new(Value::from(2)).unwrap(), Value::from(4));
         let mut d = Value::try_from(map).unwrap();
@@ -292,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_is_descendant() {
-        let mut map = LinkedHashMap::<HashedValue, Value>::new();
+        let mut map = IndexMap::<HashedValue, Value>::new();
         map.insert(HashedValue::new(Value::from(1)).unwrap(), Value::from(2));
         map.insert(HashedValue::new(Value::from(2)).unwrap(), Value::from(4));
         let v1 = Value::try_from(map.clone()).unwrap();

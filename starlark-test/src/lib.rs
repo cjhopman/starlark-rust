@@ -21,7 +21,7 @@ extern crate test;
 
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
-use linked_hash_map::LinkedHashMap;
+use indexmap::IndexMap;
 use starlark::environment::TypeValues;
 use starlark::eval::call_stack::CallStack;
 use starlark::eval::simple::eval;
@@ -196,7 +196,7 @@ def assert_(cond, msg="assertion failed"):
             &CallStack::default(),
             TypeValues::new(env),
             Vec::new(),
-            LinkedHashMap::new(),
+            IndexMap::new(),
             None,
             None,
         ) {

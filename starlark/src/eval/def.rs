@@ -26,7 +26,7 @@ use crate::values::none::NoneType;
 use crate::values::{function, mutability::ImmutableCell, TypedValue, Value, ValueResult};
 use codemap::{CodeMap, Spanned};
 use codemap_diagnostic::Diagnostic;
-use linked_hash_map::LinkedHashMap;
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::iter;
@@ -192,7 +192,7 @@ impl TypedValue for Def {
         function::collect_str(&self.function_type, &self.signature, collector);
     }
 
-    fn collect_repr(&self, collector: &mut String)  {
+    fn collect_repr(&self, collector: &mut String) {
         function::collect_repr(&self.function_type, &self.signature, collector);
     }
 
@@ -201,7 +201,7 @@ impl TypedValue for Def {
         call_stack: &CallStack,
         type_values: TypeValues,
         positional: Vec<Value>,
-        named: LinkedHashMap<String, Value>,
+        named: IndexMap<String, Value>,
         args: Option<Value>,
         kwargs: Option<Value>,
     ) -> ValueResult {

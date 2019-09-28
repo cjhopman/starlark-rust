@@ -34,7 +34,7 @@ use crate::values::none::NoneType;
 use crate::values::*;
 use codemap::{CodeMap, Span, Spanned};
 use codemap_diagnostic::{Diagnostic, Level, SpanLabel, SpanStyle};
-use linked_hash_map::LinkedHashMap;
+use indexmap::IndexMap;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -449,7 +449,7 @@ fn eval_call<'a>(
     context: &EvaluationContext,
 ) -> EvalResult {
     let npos = eval_vector!(pos, context);
-    let mut nnamed = LinkedHashMap::new();
+    let mut nnamed = IndexMap::new();
     for &(ref k, ref v) in named.iter() {
         nnamed.insert(k.node.clone(), eval_expr(v, context)?);
     }

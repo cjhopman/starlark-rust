@@ -96,10 +96,6 @@ impl Set {
         self.content.is_empty()
     }
 
-    pub fn pop_front(&mut self) -> Option<Value> {
-        self.content.pop_front().map(HashedValue::into)
-    }
-
     pub fn pop_back(&mut self) -> Option<Value> {
         self.content.pop_back().map(HashedValue::into)
     }
@@ -146,7 +142,7 @@ impl TypedValue for Set {
         collector.push('[');
         let mut first = true;
         for x in self.content.iter() {
-            if first {                
+            if first {
                 first = false;
             } else {
                 collector.push_str(", ");

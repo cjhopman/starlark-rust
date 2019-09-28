@@ -33,7 +33,7 @@ impl CloneForCell for String {
 impl TypedValue for String {
     type Holder = MutableCell<String>;
 
-    fn find_in<'a>(&'_ self, map: &'a LinkedHashMap<String, Value>) -> Option<&'a Value> {
+    fn find_in<'a>(&'_ self, map: &'a IndexMap<String, Value>) -> Option<&'a Value> {
         map.get(self)
     }
 
@@ -43,11 +43,11 @@ impl TypedValue for String {
         Box::new(iter::empty())
     }
 
-    fn collect_str(&self, s:&mut String)  {
+    fn collect_str(&self, s: &mut String) {
         s.push_str(self);
     }
 
-    fn collect_repr(&self, s:&mut String) {
+    fn collect_repr(&self, s: &mut String) {
         s.push('"');
         for x in self.chars() {
             for c in x.escape_debug() {

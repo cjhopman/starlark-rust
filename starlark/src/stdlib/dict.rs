@@ -19,6 +19,7 @@ use crate::values::function::KwargsDict;
 
 use crate::values::error::*;
 use crate::values::none::NoneType;
+use crate::values::tuple::Tuple;
 use crate::values::*;
 
 pub const DICT_KEY_NOT_FOUND_ERROR_CODE: &str = "UF20";
@@ -300,9 +301,11 @@ starlark_module! {global =>
     /// ```
     dict.popitem(this) {
         let mut this = this.downcast_mut::<Dictionary>()?.unwrap();
-        match this.pop_front() {
-            Some(x) => ok!(x),
-            None => starlark_err!(
+
+        let key = this.get_content().keys().nth(0).cloned();
+        match key {
+            Some(k) => ok!(Value::new(Tuple::new(vec!(k.get_value().clone(), this.remove(k.get_value())?.unwrap())))),
+            None =>starlark_err!(
                 POP_ON_EMPTY_DICT_ERROR_CODE,
                 "Cannot .popitem() on an empty dictionary".to_owned(),
                 "empty dictionary".to_owned()

@@ -79,12 +79,8 @@ pub struct Opt {
     )]
     command: Option<String>,
 
-    #[structopt(
-        long = "dir",
-        help = "cd to here."
-    )]
+    #[structopt(long = "dir", help = "cd to here.")]
     dir: Option<String>,
-
 
     #[structopt(short = "x", help = "no-bucky")]
     not_buck: bool,
@@ -112,15 +108,15 @@ pub struct Opt {
 
 use std;
 
-type ValueMap = LinkedHashMap<::std::string::String, starlark::values::Value>;
+type ValueMap = IndexMap<::std::string::String, starlark::values::Value>;
 
 fn some_func(
     __call_stack: &starlark::eval::call_stack::CallStack,
     __env: starlark::environment::TypeValues,
     mut args: ParameterParser,
-    recorder: &std::rc::Rc<std::cell::RefCell<LinkedHashMap<String, ValueMap>>>,
+    recorder: &std::rc::Rc<std::cell::RefCell<IndexMap<String, ValueMap>>>,
 ) -> starlark::values::ValueResult {
-    let map: LinkedHashMap<String, Value> = args.next_arg()?.into_kw_args_dict("kwargs")?;
+    let map: IndexMap<String, Value> = args.next_arg()?.into_kw_args_dict("kwargs")?;
 
     let name = map.get("name").unwrap();
     // println!("adding {}", name);
@@ -135,10 +131,8 @@ fn provider_impl(
     mut args: starlark::values::function::ParameterParser,
 ) -> starlark::values::ValueResult {
     #[allow(unused_mut)]
-    let mut kwargs: ::linked_hash_map::LinkedHashMap<
-        ::std::string::String,
-        starlark::values::Value,
-    > = args.next_arg()?.into_kw_args_dict("kwargs")?;
+    let mut kwargs: ::indexmap::IndexMap<::std::string::String, starlark::values::Value> =
+        args.next_arg()?.into_kw_args_dict("kwargs")?;
     args.check_no_more_args()?;
     Ok(Value::new(starlark::stdlib::structs::StarlarkStruct {
         fields: kwargs,
@@ -168,13 +162,13 @@ starlark_module! {global_functions =>
             .put("is_unknown", hostArchitecture == Architecture.UNKNOWN)
             .put("is_x86_64", hostArchitecture == Architecture.X86_64)
             */
-        let mut os : LinkedHashMap<String, Value> = LinkedHashMap::new();
+        let mut os : IndexMap<String, Value> = IndexMap::new();
         os.insert("is_linux".to_string(), Value::new(false));
         os.insert("is_macos".to_string(), Value::new(true));
         os.insert("is_windows".to_string(), Value::new(false));
         os.insert("is_freebsd".to_string(), Value::new(false));
         os.insert("is_unknown".to_string(), Value::new(false));
-        let mut arch : LinkedHashMap<String, Value> = LinkedHashMap::new();
+        let mut arch : IndexMap<String, Value> = IndexMap::new();
         arch.insert("is_aarch64".to_string(), Value::new(false));
         arch.insert("is_arm".to_string(), Value::new(false));
         arch.insert("is_armeb".to_string(), Value::new(false));
@@ -187,7 +181,7 @@ starlark_module! {global_functions =>
         arch.insert("is_ppc64".to_string(), Value::new(false));
         arch.insert("is_unknown".to_string(), Value::new(false));
         arch.insert("is_x86_64".to_string(), Value::new(true));
-        let mut info : LinkedHashMap<String, Value> = LinkedHashMap::new();
+        let mut info : IndexMap<String, Value> = IndexMap::new();
         info.insert("os".to_string(), Value::new(starlark::stdlib::structs::StarlarkStruct{fields: os}));
         info.insert("arch".to_string(), Value::new(starlark::stdlib::structs::StarlarkStruct{fields: arch}));
         Ok(Value::new(starlark::stdlib::structs::StarlarkStruct{fields: info}))
@@ -210,7 +204,7 @@ starlark_module! {global_functions =>
 
 fn register_rule_def(
     env: starlark::environment::Environment,
-    recorder: std::rc::Rc<std::cell::RefCell<LinkedHashMap<String, ValueMap>>>,
+    recorder: std::rc::Rc<std::cell::RefCell<IndexMap<String, ValueMap>>>,
     name: &str,
 ) -> starlark::environment::Environment {
     let mut signature = Vec::new();
@@ -231,7 +225,7 @@ fn register_rule_def(
 
 fn register_rule_exists(
     env: starlark::environment::Environment,
-    recorder: std::rc::Rc<std::cell::RefCell<LinkedHashMap<String, ValueMap>>>,
+    recorder: std::rc::Rc<std::cell::RefCell<IndexMap<String, ValueMap>>>,
 ) -> starlark::environment::Environment {
     let mut signature = Vec::new();
     signature.push(starlark::values::function::FunctionParameter::Normal(
@@ -253,10 +247,10 @@ fn register_rule_exists(
     env
 }
 
-use linked_hash_map::LinkedHashMap;
+use indexmap::IndexMap;
 
 fn register_natives(env: starlark::environment::Environment) -> Environment {
-    let mut map = LinkedHashMap::new();
+    let mut map = IndexMap::new();
     env.for_each_var(|k, v| {
         map.insert(k.clone().into(), v.clone());
     });
@@ -527,7 +521,7 @@ fn main() {
     let command = opt.command;
     let ast = opt.ast;
     let buck = !opt.not_buck;
-    let recorder = std::rc::Rc::new(std::cell::RefCell::new(LinkedHashMap::new()));
+    let recorder = std::rc::Rc::new(std::cell::RefCell::new(IndexMap::new()));
 
     let mut cells = HashMap::new();
 
