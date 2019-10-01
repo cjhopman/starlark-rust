@@ -395,9 +395,9 @@ impl<'a> EvaluationContext<'a> {
         }
     }
 
-    fn child(&self, name_to_index: &'a HashMap<String, usize>) -> EvaluationContext<'a> {
+    fn child(&'a self, name_to_index: &'a HashMap<String, usize>) -> EvaluationContext<'a> {
         EvaluationContext {
-            env: EvaluationContextEnvironment::Nested(&self.env.clone(), IndexedLocals::new(name_to_index)),
+            env: EvaluationContextEnvironment::Nested(&self.env, IndexedLocals::new(name_to_index)),
             type_values: self.type_values.clone(),
             call_stack: self.call_stack.clone(),
             map: self.map.clone(),
@@ -405,12 +405,12 @@ impl<'a> EvaluationContext<'a> {
     }
 }
 
-fn eval_compare<'a, F>(
-    this: &'a AstExpr,
-    left: &'a AstExpr,
-    right: &'a AstExpr,
+fn eval_compare<F>(
+    this: &AstExpr,
+    left: &AstExpr,
+    right: &AstExpr,
     cmp: F,
-    context: &'a EvaluationContext<'a>,
+    context: &EvaluationContext,
 ) -> EvalResult
 where
     F: Fn(Ordering) -> bool,
@@ -420,12 +420,12 @@ where
     Ok(Value::new(cmp(t(l.compare(&r), this)?)))
 }
 
-fn eval_equals<'a, F>(
-    this: &'a AstExpr,
-    left: &'a AstExpr,
-    right: &'a AstExpr,
+fn eval_equals<F>(
+    this: &AstExpr,
+    left: &AstExpr,
+    right: &AstExpr,
     cmp: F,
-    context: &'a EvaluationContext<'a>,
+    context: &EvaluationContext,
 ) -> EvalResult
 where
     F: Fn(bool) -> bool,
@@ -439,12 +439,12 @@ where
 }
 
 fn eval_slice<'a>(
-    this: &'a AstExpr,
-    a: &'a AstExpr,
-    start: &'a Option<AstExpr>,
-    stop: &'a Option<AstExpr>,
-    stride: &'a Option<AstExpr>,
-    context: &'a EvaluationContext<'a>,
+    this: &AstExpr,
+    a: &AstExpr,
+    start: &Option<AstExpr>,
+    stop: &Option<AstExpr>,
+    stride: &Option<AstExpr>,
+    context: &EvaluationContext,
 ) -> EvalResult {
     let a = eval_expr(a, context)?;
     let start = match start {
@@ -463,13 +463,13 @@ fn eval_slice<'a>(
 }
 
 fn eval_call<'a>(
-    this: &'a AstExpr,
-    e: &'a AstExpr,
-    pos: &'a [AstExpr],
-    named: &'a [(AstString, AstExpr)],
-    args: &'a Option<AstExpr>,
-    kwargs: &'a Option<AstExpr>,
-    context: &'a EvaluationContext<'a>,
+    this: &AstExpr,
+    e: &AstExpr,
+    pos: &[AstExpr],
+    named: &[(AstString, AstExpr)],
+    args: &Option<AstExpr>,
+    kwargs: &Option<AstExpr>,
+    context: &EvaluationContext,
 ) -> EvalResult {
     let f = eval_expr(e, context)?;
     let mut new_stack = context.call_stack.clone();
@@ -503,10 +503,10 @@ fn eval_call<'a>(
 }
 
 fn eval_dot<'a>(
-    this: &'a AstExpr,
-    e: &'a AstExpr,
-    s: &'a AstString,
-    context: &'a EvaluationContext<'a>,
+    this: &AstExpr,
+    e: &AstExpr,
+    s: &AstString,
+    context: &EvaluationContext,
 ) -> EvalResult {
     let left = eval_expr(e, context)?;
     if let Some(v) = context.type_values.get_type_value(&left, &s.node) {
@@ -569,7 +569,7 @@ fn set_transformed<'a>(
     }
 }
 
-fn eval_transformed<'a>(transformed: &'a TransformedExpr, context: &'a EvaluationContext<'a>) -> EvalResult {
+fn eval_transformed<'a>(transformed: &TransformedExpr, context: &EvaluationContext) -> EvalResult {
     match transformed {
         TransformedExpr::Tuple(ref v, ..) => {
             let mut r = Vec::with_capacity(v.len());
@@ -612,9 +612,9 @@ fn make_set(values: Vec<Value>, context: &EvaluationContext, span: Span) -> Eval
 // An intermediate transformation that tries to evaluate parameters of function / indices.
 // It is used to cache result of LHS in augmented assignment.
 // This transformation by default should be a deep copy (clone).
-fn transform<'a>(
-    expr: &'a AstExpr,
-    context: &'a EvaluationContext<'a>,
+fn transform(
+    expr: &AstExpr,
+    context: &EvaluationContext,
 ) -> Result<TransformedExpr, EvalException> {
     match expr.node {
         Expr::Dot(ref e, ref s) => Ok(TransformedExpr::Dot(
@@ -646,7 +646,7 @@ fn transform<'a>(
 }
 
 // Evaluate the AST element, i.e. mutate the environment and return an evaluation result
-fn eval_expr<'a>(expr: &'a AstExpr, context: &'a EvaluationContext<'a>) -> EvalResult {
+fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
     // println!("ex {}", expr.node);
     match expr.node {
         Expr::Tuple(ref v) => {
