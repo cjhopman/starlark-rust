@@ -21,8 +21,10 @@ impl<'a, Q: SmallHash + ?Sized> BorrowedHash<'a, Q> {
     }
 }
 
-impl<'a, Q, V> Equivalent<Hashed<V>> for BorrowedHash<'a, Q> 
-    where V: SmallHash, Q: SmallHash + Equivalent<V> + ?Sized
+impl<'a, Q, V> Equivalent<Hashed<V>> for BorrowedHash<'a, Q>
+where
+    V: SmallHash,
+    Q: SmallHash + Equivalent<V> + ?Sized,
 {
     fn equivalent(&self, key: &Hashed<V>) -> bool {
         self.hash == key.hash && self.v.equivalent(&key.v)
@@ -39,11 +41,11 @@ pub trait SmallHash: Eq {
     fn get_hash(&self) -> u64;
 }
 
-impl <T: Hash + Eq + ?Sized> SmallHash for T {
-    fn get_hash(&self) -> u64 { 
+impl<T: Hash + Eq + ?Sized> SmallHash for T {
+    fn get_hash(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.hash(&mut hasher);
-        hasher.finish()        
+        hasher.finish()
     }
 }
 
@@ -68,7 +70,7 @@ impl<V: SmallHash> Hashed<V> {
     }
 
     fn hashed(hash: u32, v: V) -> Self {
-        Self{hash, v}
+        Self { hash, v }
     }
 
     fn val(&self) -> &V {
@@ -171,15 +173,16 @@ impl<K: SmallHash, V> VecMap<K, V> {
     }
 
     // TODO: use Equivalent
-    pub fn get<Q>(&self, key: &Q) -> Option<&V> 
-        where Q: ?Sized + SmallHash + Equivalent<K>
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        Q: ?Sized + SmallHash + Equivalent<K>,
     {
         let hash = key.get_hash() as u32;
         for i in 0..self.values.len() {
             if self.hashes[i] == hash {
                 let v = &self.values[i];
                 if key.equivalent(&v.0) {
-                    return Some(&v.1)
+                    return Some(&v.1);
                 }
             }
         }
@@ -195,7 +198,7 @@ impl<K: SmallHash, V> VecMap<K, V> {
         for i in 0..self.values.len() {
             if self.hashes[i] == hash {
                 if self.values[i].0 == *key {
-                    return Some(&mut self.values[i].1)
+                    return Some(&mut self.values[i].1);
                 }
             }
         }
@@ -203,14 +206,15 @@ impl<K: SmallHash, V> VecMap<K, V> {
     }
 
     pub fn contains_key<Q>(&self, key: &Q) -> bool
-        where Q: SmallHash + Equivalent<K> + ?Sized,
+    where
+        Q: SmallHash + Equivalent<K> + ?Sized,
     {
         let hash = key.get_hash() as u32;
         for i in 0..self.values.len() {
             if self.hashes[i] == hash {
-                 if key.equivalent(&self.values[i].0) {
-                     return true;
-                 }
+                if key.equivalent(&self.values[i].0) {
+                    return true;
+                }
             }
         }
         return false;
@@ -230,7 +234,8 @@ impl<K: SmallHash, V> VecMap<K, V> {
     }
 
     pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
-            where Q: ?Sized + SmallHash + Equivalent<K>
+    where
+        Q: ?Sized + SmallHash + Equivalent<K>,
     {
         let len = self.values.len();
         if len == 0 {
@@ -240,12 +245,12 @@ impl<K: SmallHash, V> VecMap<K, V> {
         let hash = key.get_hash() as u32;
         for i in 0..len {
             if self.hashes[i] == hash {
-                 if key.equivalent(&self.values[i].0) {
-                     for j in i..len - 1 {
-                         self.hashes[j] = self.hashes[j + 1];
-                     }
-                     return Some(self.values.remove(i).1);
-                 }
+                if key.equivalent(&self.values[i].0) {
+                    for j in i..len - 1 {
+                        self.hashes[j] = self.hashes[j + 1];
+                    }
+                    return Some(self.values.remove(i).1);
+                }
             }
         }
         None
@@ -255,7 +260,12 @@ impl<K: SmallHash, V> VecMap<K, V> {
         let hashes = &self.hashes;
         let values = &mut self.values;
 
-        map.extend(values.drain(..).enumerate().map(|(i, p)| (Hashed::hashed(hashes[i], p.0), p.1)));
+        map.extend(
+            values
+                .drain(..)
+                .enumerate()
+                .map(|(i, p)| (Hashed::hashed(hashes[i], p.0), p.1)),
+        );
     }
 
     fn len(&self) -> usize {
@@ -266,13 +276,11 @@ impl<K: SmallHash, V> VecMap<K, V> {
         self.values.is_empty()
     }
 
-
     pub fn values(&self) -> VMValues<K, V> {
         VMValues {
             iter: self.values.iter(),
         }
     }
-
 
     pub fn keys(&self) -> VMKeys<K, V> {
         VMKeys {
@@ -281,8 +289,8 @@ impl<K: SmallHash, V> VecMap<K, V> {
     }
 
     pub fn into_iter(self) -> VMIntoIter<K, V> {
-        VMIntoIter{
-            iter: self.values.into_iter()
+        VMIntoIter {
+            iter: self.values.into_iter(),
         }
     }
 
@@ -304,11 +312,13 @@ impl<K: SmallHash, V> Default for VecMap<K, V> {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 enum MapHolder<K: SmallHash, V> {
+    Empty,
     Vec(VecMap<K, V>),
     Map(IndexMap<Hashed<K>, V>),
 }
 
 pub enum MHKeys<'a, K: SmallHash + 'a, V: 'a> {
+    Empty,
     Vec(VMKeys<'a, K, V>),
     Map(indexmap::map::Keys<'a, Hashed<K>, V>),
 }
@@ -318,15 +328,15 @@ impl<'a, K: SmallHash + 'a, V: 'a> Iterator for MHKeys<'a, K, V> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
+            MHKeys::Empty => None,
             MHKeys::Vec(iter) => iter.next(),
             MHKeys::Map(iter) => iter.next().map(Hashed::val),
         }
     }
 }
 
-
-
 pub enum MHValues<'a, K: SmallHash + 'a, V: 'a> {
+    Empty,
     Vec(VMValues<'a, K, V>),
     Map(indexmap::map::Values<'a, Hashed<K>, V>),
 }
@@ -336,6 +346,7 @@ impl<'a, K: SmallHash + 'a, V: 'a> Iterator for MHValues<'a, K, V> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
+            MHValues::Empty => None,
             MHValues::Vec(iter) => iter.next(),
             MHValues::Map(iter) => iter.next(),
         }
@@ -343,6 +354,7 @@ impl<'a, K: SmallHash + 'a, V: 'a> Iterator for MHValues<'a, K, V> {
 }
 
 pub enum MHIter<'a, K: SmallHash + 'a, V: 'a> {
+    Empty,
     Vec(VMIter<'a, K, V>),
     Map(indexmap::map::Iter<'a, Hashed<K>, V>),
 }
@@ -352,6 +364,7 @@ impl<'a, K: SmallHash + 'a, V: 'a> Iterator for MHIter<'a, K, V> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
+            MHIter::Empty => None,
             MHIter::Vec(iter) => iter.next(),
             MHIter::Map(iter) => iter.next().map(|(hk, v)| (hk.val(), v)),
         }
@@ -360,8 +373,8 @@ impl<'a, K: SmallHash + 'a, V: 'a> Iterator for MHIter<'a, K, V> {
     // def_iter!(|e| match e {})
 }
 
-
 pub enum MHIntoIter<K: SmallHash, V> {
+    Empty,
     Vec(VMIntoIter<K, V>),
     Map(indexmap::map::IntoIter<Hashed<K>, V>),
 }
@@ -371,6 +384,7 @@ impl<K: SmallHash, V> Iterator for MHIntoIter<K, V> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
+            MHIntoIter::Empty => None,
             MHIntoIter::Vec(iter) => iter.next(),
             MHIntoIter::Map(iter) => iter.next().map(|(hk, v)| (hk.v, v)),
         }
@@ -378,7 +392,6 @@ impl<K: SmallHash, V> Iterator for MHIntoIter<K, V> {
 
     // def_iter!(|e| match e {})
 }
-
 
 impl<K: SmallHash, V> MapHolder<K, V> {
     fn with_capacity(n: usize) -> Self {
@@ -392,7 +405,7 @@ impl<K: SmallHash, V> MapHolder<K, V> {
 
 impl<K: SmallHash, V> Default for MapHolder<K, V> {
     fn default() -> Self {
-        MapHolder::Vec(VecMap::default())
+        MapHolder::Empty
     }
 }
 
@@ -422,6 +435,7 @@ impl<K: SmallHash, V> SmallMap<K, V> {
 
     pub fn keys(&self) -> MHKeys<K, V> {
         match self.state {
+            MapHolder::Empty => MHKeys::Empty,
             MapHolder::Vec(ref v) => MHKeys::Vec(v.keys()),
             MapHolder::Map(ref m) => MHKeys::Map(m.keys()),
         }
@@ -429,6 +443,7 @@ impl<K: SmallHash, V> SmallMap<K, V> {
 
     pub fn values(&self) -> MHValues<K, V> {
         match self.state {
+            MapHolder::Empty => MHValues::Empty,
             MapHolder::Vec(ref v) => MHValues::Vec(v.values()),
             MapHolder::Map(ref m) => MHValues::Map(m.values()),
         }
@@ -436,6 +451,7 @@ impl<K: SmallHash, V> SmallMap<K, V> {
 
     pub fn iter(&self) -> MHIter<K, V> {
         match self.state {
+            MapHolder::Empty => MHIter::Empty,
             MapHolder::Vec(ref v) => MHIter::Vec(v.iter()),
             MapHolder::Map(ref m) => MHIter::Map(m.iter()),
         }
@@ -443,15 +459,18 @@ impl<K: SmallHash, V> SmallMap<K, V> {
 
     pub fn into_iter(self) -> MHIntoIter<K, V> {
         match self.state {
+            MapHolder::Empty => MHIntoIter::Empty,
             MapHolder::Vec(v) => MHIntoIter::Vec(v.into_iter()),
             MapHolder::Map(m) => MHIntoIter::Map(m.into_iter()),
         }
     }
 
-    pub fn get<Q> (&self, key: &Q) -> Option<&V> 
-        where Q: SmallHash + Equivalent<K> + ?Sized,
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        Q: SmallHash + Equivalent<K> + ?Sized,
     {
         match self.state {
+            MapHolder::Empty => None,
             MapHolder::Vec(ref v) => v.get(key),
             MapHolder::Map(ref m) => m.get(&BorrowedHash::new(key)),
         }
@@ -459,21 +478,29 @@ impl<K: SmallHash, V> SmallMap<K, V> {
 
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         match self.state {
+            MapHolder::Empty => None,
             MapHolder::Vec(ref mut v) => v.get_mut(key),
             MapHolder::Map(ref mut m) => m.get_mut(&BorrowedHash::new(key)),
         }
     }
 
     pub fn contains_key<Q>(&self, key: &Q) -> bool
-        where Q: SmallHash + Equivalent<K> + ?Sized,
+    where
+        Q: SmallHash + Equivalent<K> + ?Sized,
     {
         match self.state {
+            MapHolder::Empty => false,
             MapHolder::Vec(ref v) => v.contains_key(key),
             MapHolder::Map(ref m) => m.contains_key(&BorrowedHash::new(key)),
         }
     }
 
-    fn upgrade(&mut self) {
+    fn upgrade(&mut self, is_empty: bool) {
+        if is_empty {
+            std::mem::replace(&mut self.state, MapHolder::Vec(VecMap::default()));
+            return;
+        }        
+
         let mut holder = MapHolder::Map(IndexMap::with_capacity(THRESHOLD));
         std::mem::swap(&mut self.state, &mut holder);
 
@@ -481,34 +508,39 @@ impl<K: SmallHash, V> SmallMap<K, V> {
             if let MapHolder::Map(ref mut m) = self.state {
                 v.drain_to(m);
                 return;
-            }            
+            }
         }
 
         unreachable!()
     }
 
     pub fn insert(&mut self, key: K, val: V) -> Option<V> {
+        let empty;
         match self.state {
-            MapHolder::Map(ref mut m) => { return m.insert(Hashed::new(key), val); }
+            MapHolder::Empty => {
+                empty = true;
+            },
+            MapHolder::Map(ref mut m) => {
+                return m.insert(Hashed::new(key), val);
+            }
             MapHolder::Vec(ref mut v) => {
                 if v.len() + 1 < THRESHOLD {
                     return v.insert(key, val);
                 }
+                empty = false;
             }
         }
 
-        self.upgrade();
-        if let MapHolder::Map(ref mut m) = self.state { 
-            return m.insert(Hashed::new(key), val);
-        }
-
-        unreachable!()
+        self.upgrade(empty);
+        self.insert(key, val)
     }
 
     pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
-        where Q: ?Sized + SmallHash + Equivalent<K>
+    where
+        Q: ?Sized + SmallHash + Equivalent<K>,
     {
         match self.state {
+            MapHolder::Empty => None,
             MapHolder::Vec(ref mut v) => v.remove(key),
             MapHolder::Map(ref mut m) => m.shift_remove(&BorrowedHash::new(key)),
         }
@@ -516,14 +548,15 @@ impl<K: SmallHash, V> SmallMap<K, V> {
 
     pub fn is_empty(&self) -> bool {
         match self.state {
+            MapHolder::Empty => true,
             MapHolder::Vec(ref v) => v.is_empty(),
             MapHolder::Map(ref m) => m.is_empty(),
         }
     }
 
-
     pub fn len(&self) -> usize {
         match self.state {
+            MapHolder::Empty => 0,
             MapHolder::Vec(ref v) => v.len(),
             MapHolder::Map(ref m) => m.len(),
         }
@@ -548,7 +581,6 @@ where
         self.into_iter()
     }
 }
-
 
 impl<'a, K, V> IntoIterator for &'a SmallMap<K, V>
 where

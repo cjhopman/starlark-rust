@@ -167,6 +167,14 @@ pub enum Expr {
 }
 to_ast_trait!(Expr, AstExpr, Box);
 
+#[derive(Eq, PartialEq, Ord, PartialOrd)]
+enum ArgsStage {
+    Positional,
+    Named,
+    Args,
+    Kwargs,
+}
+
 impl Expr {
     pub fn is_literal(&self) -> bool {
         match self {
@@ -183,11 +191,11 @@ impl Expr {
         let mut named_args = Vec::new();
         let mut args_array = None;
         let mut kwargs_dict = None;
-        let mut stage = 0;
+        let mut stage = ArgsStage::Positional;
         for arg in args {
             match arg.node {
                 Argument::Positional(s) => {
-                    if stage > 0 {
+                    if stage != ArgsStage::Positional {
                         return Err(lalrpop_util::ParseError::User {
                             error: lexer::LexerError::WrappedError {
                                 span: arg.span,
@@ -200,23 +208,21 @@ impl Expr {
                     }
                 }
                 Argument::Named(n, v) => {
-                    if stage > 2 {
+                    if stage > ArgsStage::Named {
                         return Err(lalrpop_util::ParseError::User {
                             error: lexer::LexerError::WrappedError {
                                 span: arg.span,
                                 code: NAMED_ARGUMENT_AFTER_KWARGS_DICT_ERROR_CODE,
-                                label: "named argument after kwargs dictionary",
+                                label: "named argument after *args or **kwargs",
                             },
                         });
                     } else {
-                        if stage == 0 {
-                            stage = 1;
-                        }
+                        stage = ArgsStage::Named;
                         named_args.push((n, v));
                     }
                 }
                 Argument::ArgsArray(v) => {
-                    if stage > 1 {
+                    if stage > ArgsStage::Named {
                         return Err(lalrpop_util::ParseError::User {
                             error: lexer::LexerError::WrappedError {
                                 span: arg.span,
@@ -225,12 +231,12 @@ impl Expr {
                             },
                         });
                     } else {
-                        stage = 2;
+                        stage = ArgsStage::Args;
                         args_array = Some(v);
                     }
                 }
                 Argument::KWArgsDict(d) => {
-                    if stage == 3 {
+                    if stage == ArgsStage::Kwargs {
                         return Err(lalrpop_util::ParseError::User {
                             error: lexer::LexerError::WrappedError {
                                 span: arg.span,
@@ -239,7 +245,7 @@ impl Expr {
                             },
                         });
                     } else {
-                        stage = 3;
+                        stage = ArgsStage::Kwargs;
                         kwargs_dict = Some(d);
                     }
                 }
@@ -547,12 +553,12 @@ impl Statement {
         stmts: AstStatement,
     ) -> Result<Statement, lalrpop_util::ParseError<u64, lexer::Token, lexer::LexerError>> {
         {
-            let mut stage = 0;
+            let mut stage = ArgsStage::Positional;
             let mut argset = HashSet::new();
             for arg in parameters.iter() {
                 match arg.node {
                     Parameter::Normal(ref n) => {
-                        if stage > 0 {
+                        if stage > ArgsStage::Positional {
                             return Err(lalrpop_util::ParseError::User {
                                 error: lexer::LexerError::WrappedError {
                                     span: arg.span,
@@ -564,7 +570,7 @@ impl Statement {
                         test_param_name!(argset, n, arg);
                     }
                     Parameter::WithDefaultValue(ref n, ..) => {
-                        if stage > 1 {
+                        if stage > ArgsStage::Named {
                             return Err(lalrpop_util::ParseError::User {
                                 error: lexer::LexerError::WrappedError {
                                     span: arg.span,
@@ -573,13 +579,12 @@ impl Statement {
                                         "Default parameter after args array or kwargs dictionary",
                                 },
                             });
-                        } else if stage == 0 {
-                            stage = 1;
                         }
+                        stage = ArgsStage::Named;
                         test_param_name!(argset, n, arg);
                     }
                     Parameter::Args(ref n) => {
-                        if stage > 1 {
+                        if stage > ArgsStage::Named {
                             return Err(lalrpop_util::ParseError::User {
                                 error: lexer::LexerError::WrappedError {
                                     span: arg.span,
@@ -587,13 +592,12 @@ impl Statement {
                                     label: "Args parameter after another args or kwargs parameter",
                                 },
                             });
-                        } else {
-                            stage = 2;
                         }
+                        stage = ArgsStage::Args;
                         test_param_name!(argset, n, arg);
                     }
                     Parameter::KWArgs(ref n) => {
-                        if stage == 3 {
+                        if stage == ArgsStage::Kwargs {
                             return Err(lalrpop_util::ParseError::User {
                                 error: lexer::LexerError::WrappedError {
                                     span: arg.span,
@@ -601,9 +605,8 @@ impl Statement {
                                     label: "Multiple kwargs dictionary in parameters",
                                 },
                             });
-                        } else {
-                            stage = 3;
                         }
+                        stage = ArgsStage::Kwargs;
                         test_param_name!(argset, n, arg);
                     }
                 }

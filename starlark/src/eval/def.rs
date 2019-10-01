@@ -14,20 +14,20 @@
 
 //! Implementation of `def`.
 
-use crate::environment::{Environment, TypeValues};
+use crate::environment::{Environment, EnvironmentError, TypeValues};
 use crate::eval::call_stack::CallStack;
 use crate::eval::{
     eval_stmt, EvalException, EvaluationContext, EvaluationContextEnvironment, IndexedLocals,
 };
+use crate::small_map::SmallMap;
 use crate::syntax::ast::{AstParameter, AstStatement, AstString, Expr, Parameter, Statement};
 use crate::values::error::ValueError;
 use crate::values::function::{FunctionParameter, FunctionType};
 use crate::values::none::NoneType;
-use crate::small_map::SmallMap;
 use crate::values::{function, mutability::ImmutableCell, TypedValue, Value, ValueResult};
 use codemap::{CodeMap, Spanned};
 use codemap_diagnostic::Diagnostic;
-use std::collections::HashMap;
+use std::collections::{ HashSet, HashMap};
 use std::convert::TryInto;
 use std::iter;
 use std::sync::{Arc, Mutex};
@@ -52,9 +52,8 @@ impl DefCompiled {
 
         for p in &params {
             let len = local_names_to_indices.len();
-            local_names_to_indices
-                .entry(p.name().to_owned())
-                .or_insert(len);
+            // verification ensures there's no duplicate names
+            local_names_to_indices.insert(p.name().to_owned(), len);
         }
 
         let params: Result<Vec<_>, _> = params.into_iter().map(|p| Parameter::compile(p)).collect();
@@ -151,6 +150,7 @@ impl DefCompiled {
 pub(crate) struct Def {
     signature: Vec<FunctionParameter>,
     function_type: FunctionType,
+    param_names: HashSet<String>,
     captured_env: Environment,
     map: Arc<Mutex<CodeMap>>,
     stmt: DefCompiled,
@@ -167,8 +167,11 @@ impl Def {
         // This can be implemented by delegating to `Function::new`,
         // but having a separate type allows slight more efficient implementation
         // and optimizations in the future.
+        let param_names = signature.iter().filter(|e| e.is_normal()).map(|e| e.name().to_string()).collect();
+
         Value::new(Def {
             function_type: FunctionType::Def(stmt.name.node.clone(), module),
+            param_names,
             signature,
             stmt,
             captured_env: env,
@@ -205,26 +208,27 @@ impl TypedValue for Def {
         args: Option<Value>,
         kwargs: Option<Value>,
     ) -> ValueResult {
+        let params = function::IndexedParams::new(
+            &self.signature,
+            &self.param_names,
+            positional,
+            named,
+            args,
+            kwargs,
+        );
+
         // argument binding
         let mut ctx = EvaluationContext {
             call_stack: call_stack.to_owned(),
             env: EvaluationContextEnvironment::Function(
                 self.captured_env.clone(),
-                IndexedLocals::new(&self.stmt.local_names_to_indices),
+                IndexedLocals::with_params(&self.stmt.local_names_to_indices, params),
             ),
             type_values,
             map: self.map.clone(),
         };
 
-        let mut parser = function::ParameterParser::new(
-            &self.signature,
-            &self.function_type,
-            positional,
-            named,
-            args,
-            kwargs,
-        )?;
-
+        /*
         for s in &self.signature {
             let (name, v) = match s {
                 FunctionParameter::Normal(ref name) => (name, parser.next_normal(name)?),
@@ -245,6 +249,7 @@ impl TypedValue for Def {
         }
 
         parser.check_no_more_args()?;
+        */
 
         match eval_stmt(&self.stmt.suite, &mut ctx) {
             Err(EvalException::Return(_s, ret)) => Ok(ret),

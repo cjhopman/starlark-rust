@@ -14,9 +14,9 @@
 
 //! Implementation of `struct` function.
 
+use crate::small_map::SmallMap;
 use crate::values::error::ValueError;
 use crate::values::*;
-use crate::small_map::SmallMap;
 
 /// `struct()` implementation.
 pub struct StarlarkStruct {

@@ -22,6 +22,7 @@
 use crate::environment::{Environment, EnvironmentError, TypeValues};
 use crate::eval::call_stack::CallStack;
 use crate::eval::def::Def;
+use crate::small_map::SmallMap;
 use crate::syntax::ast::*;
 use crate::syntax::ast::{AstExpr, AstStatement};
 use crate::syntax::dialect::Dialect;
@@ -32,7 +33,6 @@ use crate::values::error::ValueError;
 use crate::values::function::{FunctionParameter, WrappedMethod};
 use crate::values::none::NoneType;
 use crate::values::*;
-use crate::small_map::SmallMap;
 use codemap::{CodeMap, Span, Spanned};
 use codemap_diagnostic::{Diagnostic, Level, SpanLabel, SpanStyle};
 use std::cell::RefCell;
@@ -215,6 +215,8 @@ pub(crate) struct IndexedLocals<'a> {
     /// `locals` is used to optimize access speed to local variable
     /// (versus looking into a hashmap).
     locals: RefCell<Vec<Option<Value>>>,
+
+    params: Option<function::IndexedParams<'a>>,
 }
 
 impl<'a> IndexedLocals<'a> {
@@ -222,6 +224,18 @@ impl<'a> IndexedLocals<'a> {
         IndexedLocals {
             name_to_index,
             locals: RefCell::new(vec![None; name_to_index.len()]),
+            params: None,
+        }
+    }
+
+    fn with_params(
+        name_to_index: &'a HashMap<String, usize>,
+        params: function::IndexedParams<'a>,
+    ) -> IndexedLocals<'a> {
+        IndexedLocals {
+            name_to_index,
+            locals: RefCell::new(vec![None; name_to_index.len()]),
+            params: Some(params),
         }
     }
 
@@ -234,12 +248,20 @@ impl<'a> IndexedLocals<'a> {
     }
 
     fn get_slot(&self, slot: usize, name: &str) -> Result<Value, EnvironmentError> {
-        match self.locals.borrow()[slot].clone() {
-            Some(value) => Ok(value),
-            None => Err(EnvironmentError::LocalVariableReferencedBeforeAssignment(
-                name.to_owned(),
-            )),
+        if let Some(value) = &self.locals.borrow()[slot] {
+            return Ok(value.clone());
         }
+
+        if let Some(ref p) = self.params {
+            if let Some(v) = p.get_param(slot, name) {
+                self.set_slot(slot, name, v.clone());
+                return Ok(v);
+            }
+        }
+
+        return Err(EnvironmentError::LocalVariableReferencedBeforeAssignment(
+            name.to_owned(),
+        ));
     }
 
     fn set(&self, name: &str, value: Value) {
@@ -304,8 +326,8 @@ impl<'a> EvaluationContextEnvironment<'a> {
 
     fn get_slot(&self, _slot: usize, name: &str) -> Result<Value, EnvironmentError> {
         match self {
-            EvaluationContextEnvironment::Function(_, locals)
-            | EvaluationContextEnvironment::Nested(_, locals) => locals.get_slot(_slot, name),
+            EvaluationContextEnvironment::Function(_, locals) => locals.get_slot(_slot, name),
+            EvaluationContextEnvironment::Nested(_, locals) => locals.get_slot(_slot, name),
             _ => unreachable!("slot in non-indexed environment"),
         }
     }
@@ -448,22 +470,26 @@ fn eval_call<'a>(
     kwargs: &Option<AstExpr>,
     context: &EvaluationContext,
 ) -> EvalResult {
-    let npos = eval_vector!(pos, context);
+    let f = eval_expr(e, context)?;
+
+    let mut parser = f.new_indexed_params();
+    for expr in pos {
+        parser.push_pos(eval_expr(expr, context)?);
+    }
+    if let Some(ref x) = args {
+        parser.push_args(eval_expr(x, context)?);
+    };
+
+    // TODO: maybe compute a mapping and store it somewhere?
     let mut nnamed = SmallMap::new();
     for &(ref k, ref v) in named.iter() {
         nnamed.insert(k.node.clone(), eval_expr(v, context)?);
     }
-    let nargs = if let Some(ref x) = args {
-        Some(eval_expr(x, context)?)
-    } else {
-        None
-    };
     let nkwargs = if let Some(ref x) = kwargs {
         Some(eval_expr(x, context)?)
     } else {
         None
     };
-    let f = eval_expr(e, context)?;
     let mut new_stack = context.call_stack.clone();
     if context.call_stack.contains(f.function_id()) {
         Err(EvalException::Recursion(this.span, f.to_repr(), new_stack))

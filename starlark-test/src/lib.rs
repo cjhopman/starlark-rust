@@ -21,10 +21,10 @@ extern crate test;
 
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
-use starlark::small_map::SmallMap;
 use starlark::environment::TypeValues;
 use starlark::eval::call_stack::CallStack;
 use starlark::eval::simple::eval;
+use starlark::small_map::SmallMap;
 use starlark::stdlib::global_environment_with_extensions;
 use starlark::syntax::dialect::Dialect;
 use starlark::values::error::ValueError;

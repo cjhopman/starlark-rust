@@ -42,11 +42,11 @@ use std::sync::{Arc, Mutex};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
+use starlark::small_map::SmallMap;
 use starlark::values::error::*;
 use starlark::values::function::*;
 use starlark::values::none::*;
 use starlark::values::*;
-use starlark::small_map::SmallMap;
 
 const EXIT_CODE_FAILURE: i32 = 2;
 

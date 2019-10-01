@@ -14,10 +14,10 @@
 
 //! Parameter conversion utilities for `starlark_module!` macros.
 
+use crate::small_map::SmallMap;
 use crate::values::dict::Dictionary;
 use crate::values::error::ValueError;
 use crate::values::{TypedValue, Value};
-use crate::small_map::SmallMap;
 use std::convert::TryInto;
 use std::hash::Hash;
 

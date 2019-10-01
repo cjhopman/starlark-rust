@@ -14,10 +14,11 @@
 
 //! Function as a TypedValue
 use super::*;
+use crate::environment::{Environment, EnvironmentError, TypeValues};
+use crate::small_map::SmallMap;
 use crate::values::error::RuntimeError;
 use crate::values::none::NoneType;
 use crate::{stdlib::macros::param::TryParamConvertFromValue, values::dict::Dictionary};
-use crate::small_map::SmallMap;
 use std::convert::TryInto;
 use std::iter;
 use std::mem;
@@ -31,6 +32,28 @@ pub enum FunctionParameter {
     WithDefaultValue(String, Value),
     ArgsArray(String),
     KWArgsDict(String),
+}
+
+impl FunctionParameter {
+    pub fn is_normal(&self) -> bool {
+        match self {
+            FunctionParameter::Normal(..) |
+            FunctionParameter::Optional(..) |
+            FunctionParameter::WithDefaultValue(..) => true,
+            FunctionParameter::ArgsArray(..) |
+            FunctionParameter::KWArgsDict(..) => false,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            FunctionParameter::Normal(name) => name,
+            FunctionParameter::Optional(name) => name,
+            FunctionParameter::WithDefaultValue(name, _) => name,
+            FunctionParameter::ArgsArray(name) => name,
+            FunctionParameter::KWArgsDict(name) => name,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -830,6 +853,147 @@ impl From<KwargsDict> for Value {
         let mut v = Value::new(a);
         v.freeze();
         v.shared()
+    }
+}
+
+#[doc(hidden)]
+pub struct IndexedParams<'a> {
+    // signature: &'a [FunctionParameter],
+    // current parameter index in function signature
+    signature: &'a [FunctionParameter],
+    param_names: &'a std::collections::HashSet<String>,
+    positional: Vec<Value>,
+    args_len: usize,
+    args: Option<Value>,
+    // while named args can appear before *args, *args is processed as though it appears before all named args.
+    named: SmallMap<String, Value>,
+    kwargs_arg: Option<Value>,
+}
+
+impl<'a> IndexedParams<'a> {
+    pub fn new(
+        signature: &'a [FunctionParameter],
+        param_names: &'a std::collections::HashSet<String>,
+        positional: Vec<Value>,
+        named: SmallMap<String, Value>,
+        args: Option<Value>,
+        kwargs_arg: Option<Value>,
+    ) -> IndexedParams<'a> {
+        let args_len = args.as_ref().map(|v| v.length().unwrap()).unwrap_or(0) as usize;
+        IndexedParams {
+            signature,
+            param_names,
+            positional,
+            args,
+            args_len,
+            named,
+            kwargs_arg,
+        }
+    }
+
+    /*
+        Normal(String),
+        Optional(String),
+        WithDefaultValue(String, Value),
+        ArgsArray(String),
+        KWArgsDict(String),
+
+    */
+
+    pub fn get_normal(&self, slot: usize, name: &str) -> Option<Value> {
+        if let Some(named) = self.named.get(name) {
+            if slot < self.positional.len() + self.args_len {
+                panic!("unexpected slot")
+            }
+            return Some(named.clone());
+        }
+
+        if let Some(v) = self.positional.get(slot) {
+            return Some(v.clone());
+        }
+
+        if slot < self.positional.len() + self.args_len {
+            return Some(
+                self.args
+                    .as_ref()
+                    .unwrap()
+                    .at(Value::new((slot - self.positional.len()) as i64))
+                    .unwrap(),
+            );
+        }
+
+        if let Some(a) = &self.kwargs_arg {
+            return a.at(Value::new(name.to_string())).ok();
+        }
+
+        None
+    }
+
+    pub fn get_param(&self, slot: usize, slot_name: &str) -> Option<Value> {
+        match self.signature.get(slot) {
+            Some(FunctionParameter::Normal(ref name)) => {
+                assert!(name == slot_name);
+                self.get_normal(slot, name)
+            }
+            Some(FunctionParameter::Optional(..)) => {
+                unreachable!("optional params only exist in native functions")
+            }
+            Some(FunctionParameter::WithDefaultValue(ref name, ref default)) => {
+                assert!(name == slot_name);
+                self.get_normal(slot, name)
+                    .or_else(|| Some(default.clone()))
+            }
+            Some(FunctionParameter::ArgsArray(ref name)) => {
+                // A non-obvious property of a function that accepts *args: if there are any named args 
+                // passed to the function, then either *args will be empty, or there will be an error.
+
+                // TODO: check for the error here.
+                assert!(name == slot_name);
+                if slot < self.positional.len() {
+                    let vec: Vec<Value> = self
+                        .positional
+                        .iter()
+                        .skip(slot)
+                        .map(|e| e.clone())
+                        .collect();
+                    Some(Value::new(ArgsArray::new(
+                        vec,
+                        self.args.as_ref().map(|e| e.shared()),
+                    )))
+                } else if let Some(args) = &self.args {
+                    let vec: Vec<Value> = args
+                        .iter()
+                        .unwrap()
+                        .into_iter()
+                        .skip(slot - self.positional.len())
+                        .collect();
+                    Some(Value::from(vec))
+                } else {
+                    Some(Value::from(Vec::<Value>::new()))
+                }
+            }
+            Some(FunctionParameter::KWArgsDict(ref name)) => {
+                assert!(name == slot_name);
+                let mut map = SmallMap::new();
+
+                for (k, v) in &self.named {
+                    if !self.param_names.contains(k) {
+                        map.insert(Value::new(k.clone()), v.clone());
+                    }
+                }
+
+                if let Some(kwargs) = &self.kwargs_arg {
+                    for k in kwargs.iter().unwrap().into_iter() {
+                        if !self.param_names.contains(&k.to_str()) {
+                            map.insert(k.clone(), kwargs.at(k).unwrap().clone());                        
+                        }                        
+                    }
+                }
+
+                Some(Value::new(Dictionary::from(map)))
+            },
+            None => None,
+        }
     }
 }
 

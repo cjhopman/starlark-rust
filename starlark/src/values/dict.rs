@@ -30,12 +30,16 @@ pub struct Dictionary {
 }
 
 impl crate::small_map::SmallHash for Value {
-    fn get_hash(&self) -> u64 { 
+    fn get_hash(&self) -> u64 {
         self.get_hash().unwrap()
     }
 }
 
 impl Dictionary {
+    pub fn from(map: SmallMap<Value, Value>) -> Dictionary {
+        Dictionary{content: map}
+    }
+
     pub fn new_typed() -> Dictionary {
         Dictionary::default()
     }
@@ -95,9 +99,7 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
             content: SmallMap::new(),
         };
         for (k, v) in a.iter() {
-            result
-                .content
-                .insert(k.clone().into(), v.clone().into());
+            result.content.insert(k.clone().into(), v.clone().into());
         }
         Ok(result)
     }
@@ -113,9 +115,7 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
             content: SmallMap::new(),
         };
         for (k, v) in a.iter() {
-            result
-                .content
-                .insert(k.clone().into(), v.clone().into());
+            result.content.insert(k.clone().into(), v.clone().into());
         }
         Ok(result)
     }
