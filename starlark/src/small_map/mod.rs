@@ -499,7 +499,7 @@ impl<K: SmallHash, V> SmallMap<K, V> {
         if is_empty {
             std::mem::replace(&mut self.state, MapHolder::Vec(VecMap::default()));
             return;
-        }        
+        }
 
         let mut holder = MapHolder::Map(IndexMap::with_capacity(THRESHOLD));
         std::mem::swap(&mut self.state, &mut holder);
@@ -519,7 +519,7 @@ impl<K: SmallHash, V> SmallMap<K, V> {
         match self.state {
             MapHolder::Empty => {
                 empty = true;
-            },
+            }
             MapHolder::Map(ref mut m) => {
                 return m.insert(Hashed::new(key), val);
             }

@@ -82,9 +82,11 @@
 //! }
 //! ```
 use crate::environment::TypeValues;
+
 use crate::eval::call_stack;
 use crate::eval::call_stack::CallStack;
 use crate::values::error::ValueError;
+use crate::values::function::FunctionInvoker;
 use crate::values::iter::{FakeTypedIterable, RefIterable, TypedIterable};
 use codemap_diagnostic::Level;
 use std::any::Any;
@@ -96,6 +98,7 @@ use std::fmt;
 use std::marker;
 use std::rc::Rc;
 
+pub use crate::eval::EvalResult;
 pub use mutability::CloneForCell;
 pub use mutability::ImmutableCell;
 pub use mutability::MutableCell;
@@ -355,18 +358,15 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
         }
     }
 
-    fn call(
-        &self,
-        call_stack: &CallStack,
-        type_values: TypeValues,
-        positional: Vec<Value>,
-        named: SmallMap<String, Value>,
-        args: Option<Value>,
-        kwargs: Option<Value>,
-    ) -> ValueResult {
-        self.content
-            .borrow()
-            .call(call_stack, type_values, positional, named, args, kwargs)
+    fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
+        match self.content.borrow() {
+            RefOrRef::Ptr(t) => t.new_invoker(),
+            RefOrRef::Borrowed(..) => Err(ValueError::OperationNotSupported {
+                op: "call()".to_owned(),
+                left: self.get_type().to_owned(),
+                right: None,
+            }),
+        }
     }
 
     fn at(&self, index: Value) -> Result<Value, ValueError> {
@@ -540,15 +540,7 @@ trait ValueHolderDyn {
     fn equals(&self, other: &Value) -> Result<bool, ValueError>;
     fn compare(&self, other: &Value) -> Result<Ordering, ValueError>;
 
-    fn call(
-        &self,
-        call_stack: &CallStack,
-        type_values: TypeValues,
-        positional: Vec<Value>,
-        named: SmallMap<String, Value>,
-        args: Option<Value>,
-        kwargs: Option<Value>,
-    ) -> ValueResult;
+    fn new_invoker(&self) -> Result<FunctionInvoker, ValueError>;
 
     fn at(&self, index: Value) -> ValueResult;
 
@@ -743,15 +735,7 @@ pub trait TypedValue: Sized + 'static {
     /// * named: the list of argument that were named.
     /// * args: if provided, the `*args` argument.
     /// * kwargs: if provided, the `**kwargs` argument.
-    fn call(
-        &self,
-        _call_stack: &CallStack,
-        _type_values: TypeValues,
-        _positional: Vec<Value>,
-        _named: SmallMap<String, Value>,
-        _args: Option<Value>,
-        _kwargs: Option<Value>,
-    ) -> ValueResult {
+    fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
         Err(ValueError::OperationNotSupported {
             op: "call()".to_owned(),
             left: Self::TYPE.to_owned(),
@@ -1168,17 +1152,8 @@ impl Value {
         self.value_holder().is_descendant(other)
     }
 
-    pub fn call(
-        &self,
-        call_stack: &CallStack,
-        type_values: TypeValues,
-        positional: Vec<Value>,
-        named: SmallMap<String, Value>,
-        args: Option<Value>,
-        kwargs: Option<Value>,
-    ) -> ValueResult {
-        self.value_holder()
-            .call(call_stack, type_values, positional, named, args, kwargs)
+    pub fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
+        self.value_holder().new_invoker()
     }
 
     pub fn at(&self, index: Value) -> ValueResult {
@@ -1188,6 +1163,7 @@ impl Value {
     pub fn set_at(&mut self, index: Value, new_value: Value) -> Result<(), ValueError> {
         self.value_holder().set_at(index, new_value)
     }
+
     pub fn slice(
         &self,
         start: Option<Value>,

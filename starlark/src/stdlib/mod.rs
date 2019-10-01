@@ -580,9 +580,13 @@ starlark_module! {global_functions =>
                 }
             }
             Some(key) => {
-                let mut cached = key.call(cs, e.clone(), vec![max.clone()], SmallMap::new(), None, None)?;
+                let mut invoker = key.new_invoker()?;
+                invoker.push_pos(max.clone());
+                let mut cached = invoker.invoke(cs, e.clone())?;
                 for i in it {
-                    let keyi = key.call(cs, e.clone(), vec![i.clone()], SmallMap::new(), None, None)?;
+                    let mut invoker = key.new_invoker()?;
+                    invoker.push_pos(i.clone());
+                    let keyi = invoker.invoke(cs, e.clone())?;
                     if cached.compare(&keyi)? == Ordering::Less {
                         max = i;
                         cached = keyi;
@@ -637,9 +641,13 @@ starlark_module! {global_functions =>
                 }
             }
             Some(key) => {
-                let mut cached = key.call(cs, e.clone(), vec![min.clone()], SmallMap::new(), None, None)?;
+                let mut invoker = key.new_invoker()?;
+                invoker.push_pos(min.clone());
+                let mut cached = invoker.invoke(cs, e.clone())?;
                 for i in it {
-                    let keyi = key.call(cs, e.clone(), vec![i.clone()], SmallMap::new(), None, None)?;
+                    let mut invoker = key.new_invoker()?;
+                    invoker.push_pos(i.clone());
+                    let keyi = invoker.invoke(cs, e.clone())?;
                     if cached.compare(&keyi)? == Ordering::Greater {
                         min = i;
                         cached = keyi;
@@ -828,9 +836,11 @@ starlark_module! {global_functions =>
             Some(key) => {
                 let mut v = Vec::new();
                 for el in x {
+                    let mut inv = key.new_invoker()?;
+                    inv.push_pos(el.clone());
                     v.push((
-                        el.clone(),
-                        key.call(cs, e.clone(), vec![el], SmallMap::new(), None, None)?
+                        el,
+                        inv.invoke(cs, e.clone())?
                     ));
                 }
                 v

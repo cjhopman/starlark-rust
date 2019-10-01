@@ -37,7 +37,7 @@ impl crate::small_map::SmallHash for Value {
 
 impl Dictionary {
     pub fn from(map: SmallMap<Value, Value>) -> Dictionary {
-        Dictionary{content: map}
+        Dictionary { content: map }
     }
 
     pub fn new_typed() -> Dictionary {

@@ -19,6 +19,7 @@ use crate::small_map::SmallMap;
 use crate::values::error::RuntimeError;
 use crate::values::none::NoneType;
 use crate::{stdlib::macros::param::TryParamConvertFromValue, values::dict::Dictionary};
+use crate::eval::def::DefInvoker;
 use std::convert::TryInto;
 use std::iter;
 use std::mem;
@@ -37,11 +38,10 @@ pub enum FunctionParameter {
 impl FunctionParameter {
     pub fn is_normal(&self) -> bool {
         match self {
-            FunctionParameter::Normal(..) |
-            FunctionParameter::Optional(..) |
-            FunctionParameter::WithDefaultValue(..) => true,
-            FunctionParameter::ArgsArray(..) |
-            FunctionParameter::KWArgsDict(..) => false,
+            FunctionParameter::Normal(..)
+            | FunctionParameter::Optional(..)
+            | FunctionParameter::WithDefaultValue(..) => true,
+            FunctionParameter::ArgsArray(..) | FunctionParameter::KWArgsDict(..) => false,
         }
     }
 
@@ -139,20 +139,6 @@ impl From<FunctionArg> for Value {
 
 pub type StarlarkFunctionPrototype =
     dyn Fn(&CallStack, TypeValues, Vec<FunctionArg>) -> ValueResult;
-
-/// Function implementation for native (written in Rust) functions.
-///
-/// Public to be referenced in macros.
-#[doc(hidden)]
-pub struct NativeFunction<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult> {
-    /// Pointer to a native function.
-    /// Note it is a function pointer, not `Box<Fn(...)>`
-    /// to avoid generic instantiation and allocation for each native function.
-    function: F,
-    signature: Vec<FunctionParameter>,
-    function_type: FunctionType,
-}
-
 // Wrapper for method that have been affected the self object
 pub(crate) struct WrappedMethod {
     method: Value,
@@ -230,16 +216,6 @@ impl Into<RuntimeError> for FunctionError {
 impl From<FunctionError> for ValueError {
     fn from(e: FunctionError) -> Self {
         ValueError::Runtime(e.into())
-    }
-}
-
-impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> NativeFunction<F> {
-    pub fn new(name: String, function: F, signature: Vec<FunctionParameter>) -> Value {
-        Value::new(NativeFunction {
-            function,
-            signature,
-            function_type: FunctionType::Native(name),
-        })
     }
 }
 
@@ -856,143 +832,45 @@ impl From<KwargsDict> for Value {
     }
 }
 
-#[doc(hidden)]
-pub struct IndexedParams<'a> {
-    // signature: &'a [FunctionParameter],
-    // current parameter index in function signature
-    signature: &'a [FunctionParameter],
-    param_names: &'a std::collections::HashSet<String>,
-    positional: Vec<Value>,
-    args_len: usize,
-    args: Option<Value>,
-    // while named args can appear before *args, *args is processed as though it appears before all named args.
-    named: SmallMap<String, Value>,
-    kwargs_arg: Option<Value>,
+
+pub enum FunctionInvoker<'a> {
+    Native(NativeFunctionInvoker<'a>),
+    Def(DefInvoker<'a>),
 }
 
-impl<'a> IndexedParams<'a> {
-    pub fn new(
-        signature: &'a [FunctionParameter],
-        param_names: &'a std::collections::HashSet<String>,
-        positional: Vec<Value>,
-        named: SmallMap<String, Value>,
-        args: Option<Value>,
-        kwargs_arg: Option<Value>,
-    ) -> IndexedParams<'a> {
-        let args_len = args.as_ref().map(|v| v.length().unwrap()).unwrap_or(0) as usize;
-        IndexedParams {
-            signature,
-            param_names,
-            positional,
-            args,
-            args_len,
-            named,
-            kwargs_arg,
+impl<'a> FunctionInvoker<'a> {
+    pub fn invoke(self, call_stack: &CallStack, type_values: TypeValues) -> ValueResult {
+        match self {
+            FunctionInvoker::Native(inv) => inv.invoke(call_stack, type_values),
+            FunctionInvoker::Def(inv) => inv.invoke(call_stack, type_values),
         }
     }
 
-    /*
-        Normal(String),
-        Optional(String),
-        WithDefaultValue(String, Value),
-        ArgsArray(String),
-        KWArgsDict(String),
-
-    */
-
-    pub fn get_normal(&self, slot: usize, name: &str) -> Option<Value> {
-        if let Some(named) = self.named.get(name) {
-            if slot < self.positional.len() + self.args_len {
-                panic!("unexpected slot")
-            }
-            return Some(named.clone());
+    pub fn push_pos(&mut self, v: Value) {
+        match self {
+            FunctionInvoker::Native(ref mut inv) => inv.push_pos(v),
+            FunctionInvoker::Def(ref mut inv) => inv.push_pos(v),
         }
-
-        if let Some(v) = self.positional.get(slot) {
-            return Some(v.clone());
-        }
-
-        if slot < self.positional.len() + self.args_len {
-            return Some(
-                self.args
-                    .as_ref()
-                    .unwrap()
-                    .at(Value::new((slot - self.positional.len()) as i64))
-                    .unwrap(),
-            );
-        }
-
-        if let Some(a) = &self.kwargs_arg {
-            return a.at(Value::new(name.to_string())).ok();
-        }
-
-        None
     }
 
-    pub fn get_param(&self, slot: usize, slot_name: &str) -> Option<Value> {
-        match self.signature.get(slot) {
-            Some(FunctionParameter::Normal(ref name)) => {
-                assert!(name == slot_name);
-                self.get_normal(slot, name)
-            }
-            Some(FunctionParameter::Optional(..)) => {
-                unreachable!("optional params only exist in native functions")
-            }
-            Some(FunctionParameter::WithDefaultValue(ref name, ref default)) => {
-                assert!(name == slot_name);
-                self.get_normal(slot, name)
-                    .or_else(|| Some(default.clone()))
-            }
-            Some(FunctionParameter::ArgsArray(ref name)) => {
-                // A non-obvious property of a function that accepts *args: if there are any named args 
-                // passed to the function, then either *args will be empty, or there will be an error.
+    pub fn push_args(&mut self, v: Value) {
+        match self {
+            FunctionInvoker::Native(ref mut inv) => inv.push_args(v),
+            FunctionInvoker::Def(ref mut inv) => inv.push_args(v),
+        }
+    }
 
-                // TODO: check for the error here.
-                assert!(name == slot_name);
-                if slot < self.positional.len() {
-                    let vec: Vec<Value> = self
-                        .positional
-                        .iter()
-                        .skip(slot)
-                        .map(|e| e.clone())
-                        .collect();
-                    Some(Value::new(ArgsArray::new(
-                        vec,
-                        self.args.as_ref().map(|e| e.shared()),
-                    )))
-                } else if let Some(args) = &self.args {
-                    let vec: Vec<Value> = args
-                        .iter()
-                        .unwrap()
-                        .into_iter()
-                        .skip(slot - self.positional.len())
-                        .collect();
-                    Some(Value::from(vec))
-                } else {
-                    Some(Value::from(Vec::<Value>::new()))
-                }
-            }
-            Some(FunctionParameter::KWArgsDict(ref name)) => {
-                assert!(name == slot_name);
-                let mut map = SmallMap::new();
+    pub fn push_named(&mut self, name: &str, v: Value) {
+        match self {
+            FunctionInvoker::Native(ref mut inv) => inv.push_named(name, v),
+            FunctionInvoker::Def(ref mut inv) => inv.push_named(name, v),
+        }
+    }
 
-                for (k, v) in &self.named {
-                    if !self.param_names.contains(k) {
-                        map.insert(Value::new(k.clone()), v.clone());
-                    }
-                }
-
-                if let Some(kwargs) = &self.kwargs_arg {
-                    for k in kwargs.iter().unwrap().into_iter() {
-                        if !self.param_names.contains(&k.to_str()) {
-                            map.insert(k.clone(), kwargs.at(k).unwrap().clone());                        
-                        }                        
-                    }
-                }
-
-                Some(Value::new(Dictionary::from(map)))
-            },
-            None => None,
+    pub fn push_kwargs(&mut self, v: Value) {
+        match self {
+            FunctionInvoker::Native(ref mut inv) => inv.push_kwargs(v),
+            FunctionInvoker::Def(ref mut inv) => inv.push_kwargs(v),
         }
     }
 }
@@ -1138,6 +1016,75 @@ impl<'a> ParameterParser<'a> {
     }
 }
 
+
+pub struct NativeFunctionInvoker<'a> {
+    function: &'a dyn Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult,
+    signature: &'a [FunctionParameter],
+    function_type: &'a FunctionType,
+    positional: Vec<Value>,
+    named: SmallMap<String, Value>,
+    args: Option<Value>,
+    kwargs_arg: Option<Value>,
+}
+
+impl<'a> NativeFunctionInvoker<'a> {
+    pub fn new<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult>(func: &'a NativeFunction<F>) -> Self {
+        Self{
+            function: &func.function,
+            signature: &func.signature,
+            function_type: &func.function_type,
+            positional: Vec::new(),
+            named: SmallMap::new(),
+            args: None,
+            kwargs_arg: None,
+        }
+    }
+
+    pub fn invoke(self, call_stack: &CallStack, type_values: TypeValues) -> ValueResult {
+        let parser = ParameterParser::new(self.signature, self.function_type, self.positional, self.named, self.args, self.kwargs_arg)?;
+        (*self.function)(call_stack, type_values, parser)
+    }
+
+    pub fn push_pos(&mut self, v: Value) {
+        self.positional.push(v);
+    }
+
+    pub fn push_args(&mut self, v: Value) {
+        self.args = Some(v);
+    }
+
+    pub fn push_named(&mut self, name: &str, v: Value) {
+        self.named.insert(name.to_string(), v);
+    }
+
+    pub fn push_kwargs(&mut self, v: Value) {
+        self.kwargs_arg = Some(v);
+    }
+}
+
+/// Function implementation for native (written in Rust) functions.
+///
+/// Public to be referenced in macros.
+#[doc(hidden)]
+pub struct NativeFunction<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult> {
+    /// Pointer to a native function.
+    /// Note it is a function pointer, not `Box<Fn(...)>`
+    /// to avoid generic instantiation and allocation for each native function.
+    function: F,
+    signature: Vec<FunctionParameter>,
+    function_type: FunctionType,
+}
+
+impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> NativeFunction<F> {
+    pub fn new(name: String, function: F, signature: Vec<FunctionParameter>) -> Value {
+        Value::new(NativeFunction {
+            function,
+            signature,
+            function_type: FunctionType::Native(name),
+        })
+    }
+}
+
 /// Define the function type
 impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> TypedValue
     for NativeFunction<F>
@@ -1160,25 +1107,10 @@ impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> Ty
 
     const TYPE: &'static str = "function";
 
-    fn call(
-        &self,
-        call_stack: &CallStack,
-        type_values: TypeValues,
-        positional: Vec<Value>,
-        named: SmallMap<String, Value>,
-        args: Option<Value>,
-        kwargs: Option<Value>,
-    ) -> ValueResult {
-        let parser = ParameterParser::new(
-            &self.signature,
-            &self.function_type,
-            positional,
-            named,
-            args,
-            kwargs,
-        )?;
-
-        (self.function)(call_stack, type_values, parser)
+    fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
+        Ok(FunctionInvoker::Native(
+            NativeFunctionInvoker::new(self)
+        ))
     }
 }
 
@@ -1204,22 +1136,9 @@ impl TypedValue for WrappedMethod {
     }
     const TYPE: &'static str = "function";
 
-    fn call(
-        &self,
-        call_stack: &CallStack,
-        type_values: TypeValues,
-        positional: Vec<Value>,
-        named: SmallMap<String, Value>,
-        args: Option<Value>,
-        kwargs: Option<Value>,
-    ) -> ValueResult {
-        // The only thing that this wrapper does is insert self at the beginning of the positional
-        // vector
-        let positional: Vec<Value> = Some(self.self_obj.clone())
-            .into_iter()
-            .chain(positional.into_iter())
-            .collect();
-        self.method
-            .call(call_stack, type_values, positional, named, args, kwargs)
+    fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
+        let mut inv = self.method.new_invoker()?;
+        inv.push_pos(self.self_obj.clone());
+        Ok(inv)
     }
 }

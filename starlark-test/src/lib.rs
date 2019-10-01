@@ -192,14 +192,8 @@ def assert_(cond, msg="assertion failed"):
 
     bencher.iter(|| {
         let env = env.child("bench");
-        match bench_func.call(
-            &CallStack::default(),
-            TypeValues::new(env),
-            Vec::new(),
-            SmallMap::new(),
-            None,
-            None,
-        ) {
+        let inv = bench_func.new_invoker().unwrap();
+        match inv.invoke(&CallStack::default(), TypeValues::new(env)) {
             Ok(r) => r,
             Err(ValueError::DiagnosedError(e)) => {
                 Emitter::stderr(ColorConfig::Always, Some(&map.lock().unwrap())).emit(&[e]);
