@@ -15,7 +15,6 @@
 //! A module with the standard function and constants that are by default in all dialect of Starlark
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
-use indexmap::IndexMap;
 use std;
 use std::cmp::Ordering;
 use std::error::Error;
@@ -581,9 +580,9 @@ starlark_module! {global_functions =>
                 }
             }
             Some(key) => {
-                let mut cached = key.call(cs, e.clone(), vec![max.clone()], IndexMap::new(), None, None)?;
+                let mut cached = key.call(cs, e.clone(), vec![max.clone()], SmallMap::new(), None, None)?;
                 for i in it {
-                    let keyi = key.call(cs, e.clone(), vec![i.clone()], IndexMap::new(), None, None)?;
+                    let keyi = key.call(cs, e.clone(), vec![i.clone()], SmallMap::new(), None, None)?;
                     if cached.compare(&keyi)? == Ordering::Less {
                         max = i;
                         cached = keyi;
@@ -638,9 +637,9 @@ starlark_module! {global_functions =>
                 }
             }
             Some(key) => {
-                let mut cached = key.call(cs, e.clone(), vec![min.clone()], IndexMap::new(), None, None)?;
+                let mut cached = key.call(cs, e.clone(), vec![min.clone()], SmallMap::new(), None, None)?;
                 for i in it {
-                    let keyi = key.call(cs, e.clone(), vec![i.clone()], IndexMap::new(), None, None)?;
+                    let keyi = key.call(cs, e.clone(), vec![i.clone()], SmallMap::new(), None, None)?;
                     if cached.compare(&keyi)? == Ordering::Greater {
                         min = i;
                         cached = keyi;
@@ -831,7 +830,7 @@ starlark_module! {global_functions =>
                 for el in x {
                     v.push((
                         el.clone(),
-                        key.call(cs, e.clone(), vec![el], IndexMap::new(), None, None)?
+                        key.call(cs, e.clone(), vec![el], SmallMap::new(), None, None)?
                     ));
                 }
                 v

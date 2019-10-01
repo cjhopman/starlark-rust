@@ -280,13 +280,12 @@ impl EnvironmentContent {
 
     /// Get the value of the variable `name`
     pub fn get(&self, name: &str) -> Result<Value, EnvironmentError> {
-        if self.variables.contains_key(name) {
-            Ok(self.variables[name].clone())
-        } else {
-            match self.parent {
+        match self.variables.get(name) {
+            Some(v) => Ok(v.clone()),
+            None => match self.parent {
                 Some(ref p) => p.get(name),
                 None => Err(EnvironmentError::VariableNotFound(name.to_owned())),
-            }
+            },
         }
     }
 

@@ -32,9 +32,9 @@ use crate::values::error::ValueError;
 use crate::values::function::{FunctionParameter, WrappedMethod};
 use crate::values::none::NoneType;
 use crate::values::*;
+use crate::small_map::SmallMap;
 use codemap::{CodeMap, Span, Spanned};
 use codemap_diagnostic::{Diagnostic, Level, SpanLabel, SpanStyle};
-use indexmap::IndexMap;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -449,7 +449,7 @@ fn eval_call<'a>(
     context: &EvaluationContext,
 ) -> EvalResult {
     let npos = eval_vector!(pos, context);
-    let mut nnamed = IndexMap::new();
+    let mut nnamed = SmallMap::new();
     for &(ref k, ref v) in named.iter() {
         nnamed.insert(k.node.clone(), eval_expr(v, context)?);
     }

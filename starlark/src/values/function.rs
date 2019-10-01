@@ -17,6 +17,7 @@ use super::*;
 use crate::values::error::RuntimeError;
 use crate::values::none::NoneType;
 use crate::{stdlib::macros::param::TryParamConvertFromValue, values::dict::Dictionary};
+use crate::small_map::SmallMap;
 use std::convert::TryInto;
 use std::iter;
 use std::mem;
@@ -88,7 +89,7 @@ impl FunctionArg {
     pub fn into_kw_args_dict<T: TryParamConvertFromValue>(
         self,
         param_name: &'static str,
-    ) -> Result<IndexMap<String, T>, ValueError> {
+    ) -> Result<SmallMap<String, T>, ValueError> {
         match self {
             FunctionArg::KWArgsDict(dict) => dict.into_hash_map(),
             _ => Err(ValueError::IncorrectParameterType),
@@ -524,7 +525,7 @@ impl Iterator<Item=Value> for KwargsIter {
 pub struct KwargsDict {
     index: usize,
     // TODO: mark taken?
-    named: IndexMap<String, Value>,
+    named: SmallMap<String, Value>,
     kwargs_arg: Option<Value>,
 }
 
@@ -563,7 +564,7 @@ impl CloneForCell for KwargsDict {
             )
         });
 
-        let mut named = IndexMap::with_capacity(self.named.len());
+        let mut named = SmallMap::with_capacity(self.named.len());
         for (k, v) in &self.named {
             named.insert(k.clone(), v.shared());
         }
@@ -615,7 +616,7 @@ impl KwargsDict {
         unreachable!()
     }
 
-    fn new(named: IndexMap<String, Value>, kwargs_arg: Option<Value>) -> Self {
+    fn new(named: SmallMap<String, Value>, kwargs_arg: Option<Value>) -> Self {
         Self {
             index: 0,
             named,
@@ -674,8 +675,8 @@ impl KwargsDict {
 
     fn into_hash_map<T: TryParamConvertFromValue>(
         mut self,
-    ) -> Result<IndexMap<String, T>, ValueError> {
-        let mut r = IndexMap::with_capacity(self.remaining());
+    ) -> Result<SmallMap<String, T>, ValueError> {
+        let mut r = SmallMap::with_capacity(self.remaining());
 
         for (k, v) in self.named.into_iter() {
             let v: Result<_, _> = T::try_from(v);
@@ -848,7 +849,7 @@ impl<'a> ParameterParser<'a> {
         signature: &'a [FunctionParameter],
         function_type: &'a FunctionType,
         positional: Vec<Value>,
-        named: IndexMap<String, Value>,
+        named: SmallMap<String, Value>,
         args: Option<Value>,
         kwargs_arg: Option<Value>,
     ) -> Result<ParameterParser<'a>, ValueError> {
@@ -938,13 +939,13 @@ impl<'a> ParameterParser<'a> {
 
     pub struct KwargsDict {
         index: usize,
-        named: IndexMap<String, Value>,
+        named: SmallMap<String, Value>,
         kwargs_arg: Option<Value>,
 
     */
 
     pub fn next_kwargs_dict(&mut self) -> KwargsDict {
-        mem::replace(&mut self.kwargs, KwargsDict::new(IndexMap::new(), None))
+        mem::replace(&mut self.kwargs, KwargsDict::new(SmallMap::new(), None))
     }
 
     pub fn check_no_more_args(&mut self) -> Result<(), ValueError> {
@@ -1000,7 +1001,7 @@ impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> Ty
         call_stack: &CallStack,
         type_values: TypeValues,
         positional: Vec<Value>,
-        named: IndexMap<String, Value>,
+        named: SmallMap<String, Value>,
         args: Option<Value>,
         kwargs: Option<Value>,
     ) -> ValueResult {
@@ -1044,7 +1045,7 @@ impl TypedValue for WrappedMethod {
         call_stack: &CallStack,
         type_values: TypeValues,
         positional: Vec<Value>,
-        named: IndexMap<String, Value>,
+        named: SmallMap<String, Value>,
         args: Option<Value>,
         kwargs: Option<Value>,
     ) -> ValueResult {

@@ -107,7 +107,7 @@ macro_rules! starlark_parse_param_type {
         ::std::vec::Vec<$crate::values::Value>
     };
     (**) => {
-        ::indexmap::IndexMap<::std::string::String, $crate::values::Value>
+        crate::small_map::SmallMap<::std::string::String, $crate::values::Value>
     };
 }
 
@@ -264,7 +264,7 @@ macro_rules! starlark_signatures {
 ///     // Parameter can be any type which implements `TryParamConvertFromValue`.
 ///     // When parameter type is not specified, it is defaulted to `Value`
 ///     // for regular parameters, `Vec<Value>` for `*args`
-///     // and `IndexMap<String, Value>` for `**kwargs`.
+///     // and `SmallMap<String, Value>` for `**kwargs`.
 ///     sqr(x: i64) {
 ///         Ok(Value::new(x * x))
 ///     }

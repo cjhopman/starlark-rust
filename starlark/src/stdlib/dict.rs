@@ -304,7 +304,7 @@ starlark_module! {global =>
 
         let key = this.get_content().keys().nth(0).cloned();
         match key {
-            Some(k) => ok!(Value::new(Tuple::new(vec!(k.get_value().clone(), this.remove(k.get_value())?.unwrap())))),
+            Some(k) => ok!(Value::new(Tuple::new(vec!(k.clone(), this.remove(&k)?.unwrap())))),
             None =>starlark_err!(
                 POP_ON_EMPTY_DICT_ERROR_CODE,
                 "Cannot .popitem() on an empty dictionary".to_owned(),

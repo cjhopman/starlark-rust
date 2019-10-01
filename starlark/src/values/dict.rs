@@ -13,12 +13,12 @@
 // limitations under the License.
 
 //! Module define the Starlark type Dictionary
+use crate::small_map::SmallMap;
 use crate::values::error::ValueError;
 use crate::values::hashed_value::HashedValue;
 use crate::values::iter::TypedIterable;
 use crate::values::none::NoneType;
 use crate::values::*;
-use indexmap::IndexMap; // To preserve insertion order
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::hash::Hash;
@@ -26,26 +26,30 @@ use std::hash::Hash;
 /// The Dictionary type
 #[derive(Default)]
 pub struct Dictionary {
-    content: IndexMap<HashedValue, Value>,
+    content: SmallMap<Value, Value>,
+}
+
+impl crate::small_map::SmallHash for Value {
+    fn get_hash(&self) -> u64 { 
+        self.get_hash().unwrap()
+    }
 }
 
 impl Dictionary {
     pub fn new_typed() -> Dictionary {
-        Dictionary {
-            content: IndexMap::new(),
-        }
+        Dictionary::default()
     }
 
     pub fn new() -> Value {
         Value::new(Dictionary::new_typed())
     }
 
-    pub fn get_content(&self) -> &IndexMap<HashedValue, Value> {
+    pub fn get_content(&self) -> &SmallMap<Value, Value> {
         &self.content
     }
 
     pub fn get(&self, key: &Value) -> Result<Option<&Value>, ValueError> {
-        Ok(self.get_hashed(&HashedValue::new(key.clone())?))
+        Ok(self.content.get(key))
     }
 
     pub fn clear(&mut self) {
@@ -53,13 +57,13 @@ impl Dictionary {
     }
 
     pub fn remove(&mut self, key: &Value) -> Result<Option<Value>, ValueError> {
-        Ok(self.remove_hashed(&HashedValue::new(key.clone())?))
+        Ok(self.content.remove(key))
     }
 
     pub fn items(&self) -> Vec<(Value, Value)> {
         self.content
             .iter()
-            .map(|(k, v)| (k.get_value().clone(), v.clone()))
+            .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     }
 
@@ -67,20 +71,17 @@ impl Dictionary {
         self.content.values().cloned().collect()
     }
 
+    /*
     pub fn get_hashed(&self, key: &HashedValue) -> Option<&Value> {
         self.content.get(key)
     }
+    */
 
     pub fn insert(&mut self, key: Value, value: Value) -> Result<Value, ValueError> {
         let key = key.clone_for_container(self)?;
-        let key = HashedValue::new(key)?;
         let value = value.clone_for_container(self)?;
         self.content.insert(key, value);
         Ok(Value::new(NoneType::None))
-    }
-
-    pub fn remove_hashed(&mut self, key: &HashedValue) -> Option<Value> {
-        self.content.remove(key)
     }
 }
 
@@ -91,30 +92,30 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
 
     fn try_from(a: HashMap<T1, T2>) -> Result<Dictionary, ValueError> {
         let mut result = Dictionary {
-            content: IndexMap::new(),
+            content: SmallMap::new(),
         };
         for (k, v) in a.iter() {
             result
                 .content
-                .insert(HashedValue::new(k.clone().into())?, v.clone().into());
+                .insert(k.clone().into(), v.clone().into());
         }
         Ok(result)
     }
 }
 
-impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone> TryFrom<IndexMap<T1, T2>>
+impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone> TryFrom<SmallMap<T1, T2>>
     for Dictionary
 {
     type Error = ValueError;
 
-    fn try_from(a: IndexMap<T1, T2>) -> Result<Dictionary, ValueError> {
+    fn try_from(a: SmallMap<T1, T2>) -> Result<Dictionary, ValueError> {
         let mut result = Dictionary {
-            content: IndexMap::new(),
+            content: SmallMap::new(),
         };
         for (k, v) in a.iter() {
             result
                 .content
-                .insert(HashedValue::new(k.clone().into())?, v.clone().into());
+                .insert(k.clone().into(), v.clone().into());
         }
         Ok(result)
     }
@@ -122,9 +123,9 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
 
 impl CloneForCell for Dictionary {
     fn clone_for_cell(&self) -> Self {
-        let mut items = IndexMap::with_capacity(self.content.len());
+        let mut items = SmallMap::with_capacity(self.content.len());
         for (k, v) in &self.content {
-            items.insert(k.clone_for_cell(), v.shared());
+            items.insert(k.shared(), v.shared());
         }
         Self { content: items }
     }
@@ -141,7 +142,7 @@ impl TypedValue for Dictionary {
         Box::new(
             self.content
                 .iter()
-                .flat_map(|(k, v)| vec![k.get_value().clone(), v.clone()].into_iter()),
+                .flat_map(|(k, v)| vec![k.clone(), v.clone()].into_iter()),
         )
     }
 
@@ -151,7 +152,7 @@ impl TypedValue for Dictionary {
             if i != 0 {
                 r.push_str(", ");
             }
-            name.get_value().collect_repr(r);
+            name.collect_repr(r);
             r.push_str(": ");
             value.collect_repr(r);
         }
@@ -163,7 +164,7 @@ impl TypedValue for Dictionary {
             "{{{}}}",
             self.content
                 .iter()
-                .map(|(k, v)| format!("{}: {}", k.get_value().to_json(), v.to_json()))
+                .map(|(k, v)| format!("{}: {}", k.to_json(), v.to_json()))
                 .enumerate()
                 .fold("".to_string(), |accum, s| if s.0 == 0 {
                     accum + &s.1
@@ -198,7 +199,7 @@ impl TypedValue for Dictionary {
     }
 
     fn at(&self, index: Value) -> ValueResult {
-        match self.content.get(&HashedValue::new(index.clone())?) {
+        match self.content.get(&index) {
             Some(v) => Ok(v.clone()),
             None => Err(ValueError::KeyNotFound(index)),
         }
@@ -209,7 +210,7 @@ impl TypedValue for Dictionary {
     }
 
     fn is_in(&self, other: &Value) -> Result<bool, ValueError> {
-        Ok(self.content.contains_key(&HashedValue::new(other.clone())?))
+        Ok(self.content.contains_key(other))
     }
 
     fn iter(&self) -> Result<&dyn TypedIterable, ValueError> {
@@ -217,21 +218,20 @@ impl TypedValue for Dictionary {
     }
 
     fn set_at(&mut self, index: Value, new_value: Value) -> Result<(), ValueError> {
-        let index_key = HashedValue::new(index)?;
         let new_value = new_value.clone_for_container(self)?;
         {
-            if let Some(x) = self.content.get_mut(&index_key) {
+            if let Some(x) = self.content.get_mut(&index) {
                 *x = new_value;
                 return Ok(());
             }
         }
-        self.content.insert(index_key, new_value);
+        self.content.insert(index, new_value);
         Ok(())
     }
 
     fn add(&self, other: &Dictionary) -> Result<Dictionary, ValueError> {
         let mut result = Dictionary {
-            content: IndexMap::new(),
+            content: SmallMap::new(),
         };
         for (k, v) in &self.content {
             result.content.insert(k.clone(), v.clone());
@@ -245,7 +245,7 @@ impl TypedValue for Dictionary {
 
 impl TypedIterable for Dictionary {
     fn to_iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(self.content.iter().map(|x| x.0.get_value().clone()))
+        Box::new(self.content.iter().map(|x| x.0.clone()))
     }
 }
 
@@ -259,12 +259,12 @@ impl<T1: Into<Value> + Eq + Hash + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
     }
 }
 
-impl<T1: Into<Value> + Eq + Hash + Clone, T2: Into<Value> + Eq + Clone> TryFrom<IndexMap<T1, T2>>
+impl<T1: Into<Value> + Eq + Hash + Clone, T2: Into<Value> + Eq + Clone> TryFrom<SmallMap<T1, T2>>
     for Value
 {
     type Error = ValueError;
 
-    fn try_from(a: IndexMap<T1, T2>) -> Result<Value, ValueError> {
+    fn try_from(a: SmallMap<T1, T2>) -> Result<Value, ValueError> {
         Ok(Value::new(dict::Dictionary::try_from(a)?))
     }
 }
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_mutate_dict() {
-        let mut map = IndexMap::<HashedValue, Value>::new();
+        let mut map = SmallMap::<HashedValue, Value>::new();
         map.insert(HashedValue::new(Value::from(1)).unwrap(), Value::from(2));
         map.insert(HashedValue::new(Value::from(2)).unwrap(), Value::from(4));
         let mut d = Value::try_from(map).unwrap();
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_is_descendant() {
-        let mut map = IndexMap::<HashedValue, Value>::new();
+        let mut map = SmallMap::<HashedValue, Value>::new();
         map.insert(HashedValue::new(Value::from(1)).unwrap(), Value::from(2));
         map.insert(HashedValue::new(Value::from(2)).unwrap(), Value::from(4));
         let v1 = Value::try_from(map.clone()).unwrap();

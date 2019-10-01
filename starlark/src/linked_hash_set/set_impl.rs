@@ -14,15 +14,15 @@
 
 //! Simple implementation of `LinkedHashSet`.
 
-use indexmap::{map::Entry, IndexMap};
+use crate::small_map::SmallMap;
 use std::hash::Hash;
 
-/// `LinkedHashSet` is a tiny wrapper around `IndexMap`.
+/// `LinkedHashSet` is a tiny wrapper around `SmallMap`.
 ///
-/// Using `IndexMap` directly to avoid adding extra dependency.
+/// Using `SmallMap` directly to avoid adding extra dependency.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub(crate) struct LinkedHashSet<K: Eq + Hash> {
-    map: IndexMap<K, ()>,
+    map: SmallMap<K, ()>,
 }
 
 impl<K: Eq + Hash> Default for LinkedHashSet<K> {
@@ -34,13 +34,13 @@ impl<K: Eq + Hash> Default for LinkedHashSet<K> {
 impl<K: Eq + Hash> LinkedHashSet<K> {
     pub fn new() -> Self {
         LinkedHashSet {
-            map: IndexMap::new(),
+            map: SmallMap::new(),
         }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
         LinkedHashSet {
-            map: IndexMap::with_capacity(capacity),
+            map: SmallMap::with_capacity(capacity),
         }
     }
 
@@ -69,8 +69,8 @@ impl<K: Eq + Hash> LinkedHashSet<K> {
     }
 
     pub fn insert_if_absent(&mut self, value: K) {
-        if let Entry::Vacant(e) = self.map.entry(value) {
-            e.insert(());
+        if !self.contains(&value) {
+            self.insert(value);
         }
     }
 
@@ -112,7 +112,7 @@ impl<K: Eq + Hash> LinkedHashSet<K> {
 
 impl<'a, K: Hash + Eq> IntoIterator for &'a LinkedHashSet<K> {
     type Item = &'a K;
-    type IntoIter = indexmap::map::Keys<'a, K, ()>;
+    type IntoIter = crate::small_map::MHKeys<'a, K, ()>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.map.keys()

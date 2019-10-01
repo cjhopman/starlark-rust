@@ -23,10 +23,10 @@ use crate::syntax::ast::{AstParameter, AstStatement, AstString, Expr, Parameter,
 use crate::values::error::ValueError;
 use crate::values::function::{FunctionParameter, FunctionType};
 use crate::values::none::NoneType;
+use crate::small_map::SmallMap;
 use crate::values::{function, mutability::ImmutableCell, TypedValue, Value, ValueResult};
 use codemap::{CodeMap, Spanned};
 use codemap_diagnostic::Diagnostic;
-use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::iter;
@@ -201,7 +201,7 @@ impl TypedValue for Def {
         call_stack: &CallStack,
         type_values: TypeValues,
         positional: Vec<Value>,
-        named: IndexMap<String, Value>,
+        named: SmallMap<String, Value>,
         args: Option<Value>,
         kwargs: Option<Value>,
     ) -> ValueResult {

@@ -16,11 +16,11 @@
 
 use crate::values::error::ValueError;
 use crate::values::*;
-use indexmap::IndexMap;
+use crate::small_map::SmallMap;
 
 /// `struct()` implementation.
 pub struct StarlarkStruct {
-    pub fields: IndexMap<String, Value>,
+    pub fields: SmallMap<String, Value>,
 }
 
 impl TypedValue for StarlarkStruct {

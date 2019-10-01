@@ -83,3 +83,4 @@ pub mod eval;
 #[macro_use]
 pub mod stdlib;
 pub mod linked_hash_set;
+pub mod small_map;
