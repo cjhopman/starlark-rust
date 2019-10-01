@@ -172,7 +172,7 @@ impl ComprehensionCompiled {
         }
     }
 
-    pub(crate) fn eval<'a>(&'a self, expr_span: Span, context: &'a EvaluationContext<'a>) -> EvalResult {
+    pub(crate) fn eval(&self, expr_span: Span, context: &EvaluationContext) -> EvalResult {
         match self {
             ComprehensionCompiled::List(expr, fors) => {
                 let mut values = Vec::new();
@@ -204,10 +204,10 @@ impl ComprehensionCompiled {
     }
 }
 
-fn eval_one_dimensional_comprehension<'a>(
-    e: &'a AstExpr,
-    clauses: &'a [ClauseForCompiled],
-    context: &'a EvaluationContext<'a>,
+fn eval_one_dimensional_comprehension(
+    e: &AstExpr,
+    clauses: &[ClauseForCompiled],
+    context: &EvaluationContext,
     collect: &mut Vec<Value>,
 ) -> Result<(), EvalException> {
     // println!("eval1 {:?} {:?}", ***e, clauses);

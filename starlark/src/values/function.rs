@@ -15,11 +15,11 @@
 //! Function as a TypedValue
 use super::*;
 use crate::environment::{Environment, EnvironmentError, TypeValues};
+use crate::eval::def::DefInvoker;
 use crate::small_map::SmallMap;
 use crate::values::error::RuntimeError;
 use crate::values::none::NoneType;
 use crate::{stdlib::macros::param::TryParamConvertFromValue, values::dict::Dictionary};
-use crate::eval::def::DefInvoker;
 use std::convert::TryInto;
 use std::iter;
 use std::mem;
@@ -832,7 +832,6 @@ impl From<KwargsDict> for Value {
     }
 }
 
-
 pub enum FunctionInvoker<'a> {
     Native(NativeFunctionInvoker<'a>),
     Def(DefInvoker<'a>),
@@ -1016,7 +1015,6 @@ impl<'a> ParameterParser<'a> {
     }
 }
 
-
 pub struct NativeFunctionInvoker<'a> {
     function: &'a dyn Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult,
     signature: &'a [FunctionParameter],
@@ -1028,8 +1026,10 @@ pub struct NativeFunctionInvoker<'a> {
 }
 
 impl<'a> NativeFunctionInvoker<'a> {
-    pub fn new<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult>(func: &'a NativeFunction<F>) -> Self {
-        Self{
+    pub fn new<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult>(
+        func: &'a NativeFunction<F>,
+    ) -> Self {
+        Self {
             function: &func.function,
             signature: &func.signature,
             function_type: &func.function_type,
@@ -1041,7 +1041,14 @@ impl<'a> NativeFunctionInvoker<'a> {
     }
 
     pub fn invoke(self, call_stack: &CallStack, type_values: TypeValues) -> ValueResult {
-        let parser = ParameterParser::new(self.signature, self.function_type, self.positional, self.named, self.args, self.kwargs_arg)?;
+        let parser = ParameterParser::new(
+            self.signature,
+            self.function_type,
+            self.positional,
+            self.named,
+            self.args,
+            self.kwargs_arg,
+        )?;
         (*self.function)(call_stack, type_values, parser)
     }
 
@@ -1108,9 +1115,7 @@ impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> Ty
     const TYPE: &'static str = "function";
 
     fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
-        Ok(FunctionInvoker::Native(
-            NativeFunctionInvoker::new(self)
-        ))
+        Ok(FunctionInvoker::Native(NativeFunctionInvoker::new(self)))
     }
 }
 

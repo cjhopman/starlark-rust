@@ -22,13 +22,14 @@ use crate::eval::{
 };
 use crate::small_map::SmallMap;
 use crate::syntax::ast::{AstParameter, AstStatement, AstString, Expr, Parameter, Statement};
-use crate::values::error::ValueError;
 use crate::values::dict::Dictionary;
-use crate::values::function::{*};
+use crate::values::error::ValueError;
+use crate::values::function::*;
 use crate::values::none::NoneType;
 use crate::values::{function, mutability::ImmutableCell, TypedValue, Value, ValueResult};
 use codemap::{CodeMap, Spanned};
 use codemap_diagnostic::Diagnostic;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::iter;
@@ -42,6 +43,8 @@ pub struct DefCompiled {
     pub(crate) params: Vec<AstParameter>,
     pub(crate) suite: AstStatement,
     local_names_to_indices: HashMap<String, usize>,
+    args_slot: usize,
+    kwargs_slot: usize,
 }
 
 impl DefCompiled {
@@ -67,9 +70,26 @@ impl DefCompiled {
 
         let suite = Statement::compile(suite)?;
 
+        let mut args_slot = params.len();
+        let mut kwargs_slot = params.len();
+        for i in 0..params.len() {
+            match params[i].node {
+                Parameter::Normal(..) => {}
+                Parameter::WithDefaultValue(..) => {}
+                Parameter::Args(..) => {
+                    args_slot = i;
+                }
+                Parameter::KWArgs(..) => {
+                    kwargs_slot = i;
+                }
+            }
+        }
+
         Ok(DefCompiled {
             name,
             params,
+            args_slot,
+            kwargs_slot,
             suite,
             local_names_to_indices,
         })
@@ -206,54 +226,71 @@ impl TypedValue for Def {
     }
 
     fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
-        unimplemented!()
+        Ok(FunctionInvoker::Def(DefInvoker::new(
+            self,
+            &self.stmt.local_names_to_indices,
+            self.stmt.args_slot,
+            self.stmt.kwargs_slot,
+        )))
     }
 }
-
 
 #[doc(hidden)]
 pub struct IndexedParams<'a> {
     // signature: &'a [FunctionParameter],
     // current parameter index in function signature
     signature: &'a [FunctionParameter],
-    param_names: &'a std::collections::HashSet<String>,
+    local_names_to_indices: &'a HashMap<String, usize>,
 
     args_slot: usize,
     args_start: usize,
     args_len: usize,
-    
-    extra_positional: Vec<Value>,
+
+    has_extra_positional: bool,
+    extra_positional: RefCell<Vec<Value>>,
     star_args: Option<Value>,
 
-    extra_named: SmallMap<Value, Value>,
+    has_extra_named: bool,
+    extra_named: RefCell<SmallMap<Value, Value>>,
     star_kwargs: Option<Value>,
 }
 
 impl<'a> IndexedParams<'a> {
     pub fn new(
         signature: &'a [FunctionParameter],
-        param_names: &'a std::collections::HashSet<String>,
+        local_names_to_indices: &'a HashMap<String, usize>,
+        args_slot: usize,
+        args_start: usize,
         positional: Vec<Value>,
-        named: SmallMap<String, Value>,
+        named: SmallMap<Value, Value>,
         args: Option<Value>,
         kwargs_arg: Option<Value>,
     ) -> IndexedParams<'a> {
-        /*
         let args_len = args.as_ref().map(|v| v.length().unwrap()).unwrap_or(0) as usize;
         IndexedParams {
             signature,
-            param_names,
-            positional,
-            args,
+            local_names_to_indices,
+
+            args_slot,
+            args_start,
             args_len,
-            named,
-            kwargs_arg,
+
+            has_extra_positional: !positional.is_empty(),
+            extra_positional: RefCell::new(positional),
+            star_args: args,
+
+            has_extra_named: !named.is_empty(),
+            extra_named: RefCell::new(named),
+            star_kwargs: kwargs_arg,
         }
-        */
-        unimplemented!()
     }
 
-    pub fn fill_slot(&mut self, slot: usize, slot_name: &str, slots: &mut Vec<Option<Value>>) -> Option<Value> {
+    pub fn fill_slot(
+        &self,
+        slot: usize,
+        slot_name: &str,
+        slots: &mut Vec<Option<Value>>,
+    ) -> Option<Value> {
         match self.signature.get(slot) {
             Some(FunctionParameter::Normal(ref name)) => {
                 assert!(name == slot_name);
@@ -266,7 +303,8 @@ impl<'a> IndexedParams<'a> {
             }
             Some(FunctionParameter::WithDefaultValue(ref name, ref default)) => {
                 assert!(name == slot_name);
-                let v = self.get_normal(slot, name, slots)
+                let v = self
+                    .get_normal(slot, name, slots)
                     .or_else(|| Some(default.clone()));
                 slots[slot] = v.clone();
                 v
@@ -277,63 +315,92 @@ impl<'a> IndexedParams<'a> {
 
                 // TODO: check for the error here.
                 assert!(name == slot_name);
-                match (self.extra_positional.is_empty(), &self.star_args) {
-                    (true, None) => {
+                match (self.has_extra_positional, &self.star_args) {
+                    (false, None) => {
                         let v = Value::from(Vec::<Value>::new());
                         slots[slot] = Some(v.clone());
                         Some(v)
-                    },
-                    (true, Some(..)) => {
+                    }
+                    (false, Some(..)) => {
                         self.expand_args(slots);
                         slots[slot].clone()
-                    },
-                    (false, None) => {
-                        let v = Value::from(std::mem::replace(&mut self.extra_positional, Vec::new()));
+                    }
+                    (true, None) => {
+                        let vec =
+                            std::mem::replace(&mut *self.extra_positional.borrow_mut(), Vec::new());
+                        let v = Value::from(vec);
                         slots[slot] = Some(v.clone());
                         Some(v)
-                    },
-                    (false, Some(star_args)) => {
-                        let mut vec = std::mem::replace(&mut self.extra_positional, Vec::new());
+                    }
+                    (true, Some(star_args)) => {
+                        let mut vec =
+                            std::mem::replace(&mut *self.extra_positional.borrow_mut(), Vec::new());
                         vec.reserve(vec.len() + (star_args.length().unwrap() as usize));
                         vec.extend(star_args.iter().unwrap().into_iter());
                         let v = Value::from(vec);
                         slots[slot] = Some(v.clone());
                         Some(v)
-                    }                    
+                    }
                 }
             }
             Some(FunctionParameter::KWArgsDict(ref name)) => {
                 assert!(name == slot_name);
-                match (self.extra_named.is_empty(), &self.star_kwargs) {
-                    (true, None) => {
+                match (self.has_extra_named, &self.star_kwargs) {
+                    (false, None) => {
                         let v = Dictionary::new();
                         slots[slot] = Some(v.clone());
                         Some(v)
-                    },
-                    (false, None) => {
-                        let v = Value::new(Dictionary::from(std::mem::replace(&mut self.extra_named, SmallMap::new())));
+                    }
+                    (true, None) => {
+                        let v = Value::new(Dictionary::from(std::mem::replace(
+                            &mut *self.extra_named.borrow_mut(),
+                            SmallMap::new(),
+                        )));
                         slots[slot] = Some(v.clone());
                         Some(v)
-                    },
+                    }
                     _ => {
-                        self.expand_kwargs(slots);
+                        self.expand_kwargs(slots, slot);
                         slots[slot].clone()
-                    },                   
+                    }
                 }
             }
             None => None,
         }
     }
 
-    fn expand_kwargs(&self, slots: &mut Vec<Option<Value>>) {
+    fn expand_kwargs(&self, slots: &mut Vec<Option<Value>>, slot: usize) {
+        // println!("expanding kwargs");
+        let mut named = SmallMap::new();
+        if self.has_extra_named {
+            std::mem::swap(&mut *self.extra_named.borrow_mut(), &mut named);
+        }
+        let kwargs = self.star_kwargs.as_ref().unwrap();
+        for k in kwargs.iter().unwrap().into_iter() {
+            let s = k.to_str();
+            match self.local_names_to_indices.get(&s) {
+                // we might have a match for a non-param local
+                Some(found_slot) if *found_slot < slot=> {
+                    // println!("got slot {} for {}", slot, s);
+                    if slots[*found_slot].is_none() {
+                        slots[*found_slot] = Some(kwargs.at(k).unwrap());
+                    }
+                }
+                _ => {
+                    // println!("inserting {}", s);
+                    named.insert(k.clone(), kwargs.at(k).unwrap());
+                }
+            }
+        }
 
+        slots[slot] = Some(Value::new(Dictionary::from(named)));
     }
 
     fn expand_args(&self, slots: &mut Vec<Option<Value>>) {
-        let star_args = self.star_args.as_ref().unwrap();
-        let iter = star_args.iter().unwrap();
+        let star_args = self.star_args.as_ref().expect("shouldn't be possible");
+        let iter = star_args.iter().expect(&format!("odd {}", self.star_args.as_ref().unwrap()));
         let mut args_iter = iter.into_iter();
-        let idx = self.args_start;
+        let mut idx = self.args_start;
 
         while idx < self.args_slot {
             match args_iter.next() {
@@ -341,17 +408,29 @@ impl<'a> IndexedParams<'a> {
                     if slots[idx].is_none() {
                         slots[idx] = Some(v.clone());
                     }
-                },
-                None => break
+                    idx += 1;
+                }
+                None => break,
             }
         }
 
-        if self.args_slot < slots.len() {
-            let vec : Vec<Value> = args_iter.map(|v| v.clone()).collect();
-            slots[self.args_slot] = Some(Value::from(vec));
+        if self.args_slot < self.signature.len() {
+            if let FunctionParameter::ArgsArray(..) = self.signature[self.args_slot] {
+
+            } else {
+                panic!("not a *args {}", self.signature[self.args_slot].name());
+            }
+
+
+            let vec: Vec<Value> = args_iter.map(|v| v.clone()).collect();
+            if slots[self.args_slot].is_none() {
+                slots[self.args_slot] = Some(Value::from(vec));
+            } else {
+                panic!("how did this happen to me?")
+            }
         } else {
             // TODO: verify consumed args
-        }        
+        }
     }
 
     /*
@@ -363,13 +442,22 @@ impl<'a> IndexedParams<'a> {
 
     */
 
-    pub fn get_normal(&self, slot: usize, name: &str, slots: &mut Vec<Option<Value>>) -> Option<Value> {
-        if !self.extra_positional.is_empty() {
+    pub fn get_normal(
+        &self,
+        slot: usize,
+        name: &str,
+        slots: &mut Vec<Option<Value>>,
+    ) -> Option<Value> {
+        if self.has_extra_positional {
             panic!("weird, there shouldn't be extra positional args at this point");
         }
 
-        if self.args_start + self.args_len < slot {
-            self.expand_args(slots);
+        // println!("maybe expanding args");
+        if slot < self.args_start + self.args_len {
+            if let Some(..) = self.star_args {
+                // println!("really expanding args");
+                self.expand_args(slots);
+            }
             return slots[slot].clone();
         }
 
@@ -384,6 +472,7 @@ impl<'a> IndexedParams<'a> {
 pub struct DefInvoker<'a> {
     def: &'a Def,
     name_to_index: &'a HashMap<String, usize>,
+    num_params: usize,
     idx: usize,
 
     args_slot: usize,
@@ -391,24 +480,58 @@ pub struct DefInvoker<'a> {
     star_args: Option<Value>,
 
     kwargs_slot: usize,
-    extra_named: SmallMap<String, Value>,
+    extra_named: SmallMap<Value, Value>,
     star_kwargs: Option<Value>,
 
     slots: Vec<Option<Value>>,
 }
 
 impl<'a> DefInvoker<'a> {
-    pub fn invoke(mut self, call_stack: &CallStack, type_values: TypeValues) -> ValueResult {
-        let lazy_params : IndexedParams<'a>;
+    fn new(
+        def: &'a Def,
+        name_to_index: &'a HashMap<String, usize>,
+        args_slot: usize,
+        kwargs_slot: usize,
+    ) -> Self {
+        let slots_count = name_to_index.len();
+        Self {
+            def,
+            name_to_index,
+            num_params : def.stmt.params.len(),
+            idx: 0,
+            args_slot,
+            extra_positional: Vec::new(),
+            star_args: None,
+            kwargs_slot,
+            extra_named: SmallMap::new(),
+            star_kwargs: None,
+            slots: vec![None; slots_count],
+        }
+    }
 
-        let locals = IndexedLocals::with_state(self.name_to_index, std::mem::replace(&mut self.slots, Vec::new()), lazy_params);
+    pub fn invoke(mut self, call_stack: &CallStack, type_values: TypeValues) -> ValueResult {
+        let extra_positional = std::mem::replace(&mut self.extra_positional, Vec::new());
+        let extra_named = std::mem::replace(&mut self.extra_named, SmallMap::new());
+        let lazy_params: IndexedParams<'a> = IndexedParams::new(
+            &self.def.signature,
+            self.name_to_index,
+            self.args_slot,
+            self.idx,
+            extra_positional,
+            extra_named,
+            self.star_args.take(),
+            self.star_kwargs.take(),
+        );
+
+        let locals = IndexedLocals::with_state(
+            self.name_to_index,
+            std::mem::replace(&mut self.slots, Vec::new()),
+            lazy_params,
+        );
 
         let mut ctx = EvaluationContext {
             call_stack: call_stack.to_owned(),
-            env: EvaluationContextEnvironment::Function(
-                self.def.captured_env.clone(),
-                locals,
-            ),
+            env: EvaluationContextEnvironment::Function(self.def.captured_env.clone(), locals),
             type_values,
             map: self.def.map.clone(),
         };
@@ -437,8 +560,12 @@ impl<'a> DefInvoker<'a> {
 
     pub fn push_named(&mut self, name: &str, v: Value) {
         match self.name_to_index.get(name) {
-            Some(sl) => { self.slots[*sl] = Some(v); },
-            None => { self.extra_named.insert(name.to_string(), v); },
+            Some(sl) if *sl < self.num_params => {
+                self.slots[*sl] = Some(v);
+            }
+            _ => {
+                self.extra_named.insert(Value::new(name.to_string()), v);
+            }
         }
     }
 
