@@ -64,6 +64,10 @@ impl Dictionary {
         Ok(self.content.remove(key))
     }
 
+    pub fn items_iter(&self) -> impl Iterator<Item=(&Value, &Value)> {
+        self.content.iter()
+    }
+
     pub fn items(&self) -> Vec<(Value, Value)> {
         self.content
             .iter()

@@ -241,47 +241,16 @@ pub struct IndexedParams<'a> {
     // current parameter index in function signature
     signature: &'a [FunctionParameter],
     local_names_to_indices: &'a HashMap<String, usize>,
-
-    args_slot: usize,
-    args_start: usize,
-    args_len: usize,
-
-    has_extra_positional: bool,
-    extra_positional: RefCell<Vec<Value>>,
-    star_args: Option<Value>,
-
-    has_extra_named: bool,
-    extra_named: RefCell<SmallMap<Value, Value>>,
-    star_kwargs: Option<Value>,
 }
 
 impl<'a> IndexedParams<'a> {
     pub fn new(
         signature: &'a [FunctionParameter],
         local_names_to_indices: &'a HashMap<String, usize>,
-        args_slot: usize,
-        args_start: usize,
-        positional: Vec<Value>,
-        named: SmallMap<Value, Value>,
-        args: Option<Value>,
-        kwargs_arg: Option<Value>,
     ) -> IndexedParams<'a> {
-        let args_len = args.as_ref().map(|v| v.length().unwrap()).unwrap_or(0) as usize;
         IndexedParams {
             signature,
             local_names_to_indices,
-
-            args_slot,
-            args_start,
-            args_len,
-
-            has_extra_positional: !positional.is_empty(),
-            extra_positional: RefCell::new(positional),
-            star_args: args,
-
-            has_extra_named: !named.is_empty(),
-            extra_named: RefCell::new(named),
-            star_kwargs: kwargs_arg,
         }
     }
 
@@ -291,180 +260,6 @@ impl<'a> IndexedParams<'a> {
         slot_name: &str,
         slots: &mut Vec<Option<Value>>,
     ) -> Option<Value> {
-        match self.signature.get(slot) {
-            Some(FunctionParameter::Normal(ref name)) => {
-                assert!(name == slot_name);
-                let v = self.get_normal(slot, name, slots);
-                slots[slot] = v.clone();
-                v
-            }
-            Some(FunctionParameter::Optional(..)) => {
-                unreachable!("optional params only exist in native functions")
-            }
-            Some(FunctionParameter::WithDefaultValue(ref name, ref default)) => {
-                assert!(name == slot_name);
-                let v = self
-                    .get_normal(slot, name, slots)
-                    .or_else(|| Some(default.clone()));
-                slots[slot] = v.clone();
-                v
-            }
-            Some(FunctionParameter::ArgsArray(ref name)) => {
-                // A non-obvious property of a function that accepts *args: if there are any named args
-                // passed to the function, then either *args will be empty, or there will be an error.
-
-                // TODO: check for the error here.
-                assert!(name == slot_name);
-                match (self.has_extra_positional, &self.star_args) {
-                    (false, None) => {
-                        let v = Value::from(Vec::<Value>::new());
-                        slots[slot] = Some(v.clone());
-                        Some(v)
-                    }
-                    (false, Some(..)) => {
-                        self.expand_args(slots);
-                        slots[slot].clone()
-                    }
-                    (true, None) => {
-                        let vec =
-                            std::mem::replace(&mut *self.extra_positional.borrow_mut(), Vec::new());
-                        let v = Value::from(vec);
-                        slots[slot] = Some(v.clone());
-                        Some(v)
-                    }
-                    (true, Some(star_args)) => {
-                        let mut vec =
-                            std::mem::replace(&mut *self.extra_positional.borrow_mut(), Vec::new());
-                        vec.reserve(vec.len() + (star_args.length().unwrap() as usize));
-                        vec.extend(star_args.iter().unwrap().into_iter());
-                        let v = Value::from(vec);
-                        slots[slot] = Some(v.clone());
-                        Some(v)
-                    }
-                }
-            }
-            Some(FunctionParameter::KWArgsDict(ref name)) => {
-                assert!(name == slot_name);
-                match (self.has_extra_named, &self.star_kwargs) {
-                    (false, None) => {
-                        let v = Dictionary::new();
-                        slots[slot] = Some(v.clone());
-                        Some(v)
-                    }
-                    (true, None) => {
-                        let v = Value::new(Dictionary::from(std::mem::replace(
-                            &mut *self.extra_named.borrow_mut(),
-                            SmallMap::new(),
-                        )));
-                        slots[slot] = Some(v.clone());
-                        Some(v)
-                    }
-                    _ => {
-                        self.expand_kwargs(slots, slot);
-                        slots[slot].clone()
-                    }
-                }
-            }
-            None => None,
-        }
-    }
-
-    fn expand_kwargs(&self, slots: &mut Vec<Option<Value>>, slot: usize) {
-        // println!("expanding kwargs");
-        let mut named = SmallMap::new();
-        if self.has_extra_named {
-            std::mem::swap(&mut *self.extra_named.borrow_mut(), &mut named);
-        }
-        let kwargs = self.star_kwargs.as_ref().unwrap();
-        for k in kwargs.iter().unwrap().into_iter() {
-            let s = k.to_str();
-            match self.local_names_to_indices.get(&s) {
-                // we might have a match for a non-param local
-                Some(found_slot) if *found_slot < slot=> {
-                    // println!("got slot {} for {}", slot, s);
-                    if slots[*found_slot].is_none() {
-                        slots[*found_slot] = Some(kwargs.at(k).unwrap());
-                    }
-                }
-                _ => {
-                    // println!("inserting {}", s);
-                    named.insert(k.clone(), kwargs.at(k).unwrap());
-                }
-            }
-        }
-
-        slots[slot] = Some(Value::new(Dictionary::from(named)));
-    }
-
-    fn expand_args(&self, slots: &mut Vec<Option<Value>>) {
-        let star_args = self.star_args.as_ref().expect("shouldn't be possible");
-        let iter = star_args.iter().expect(&format!("odd {}", self.star_args.as_ref().unwrap()));
-        let mut args_iter = iter.into_iter();
-        let mut idx = self.args_start;
-
-        while idx < self.args_slot {
-            match args_iter.next() {
-                Some(v) => {
-                    if slots[idx].is_none() {
-                        slots[idx] = Some(v.clone());
-                    }
-                    idx += 1;
-                }
-                None => break,
-            }
-        }
-
-        if self.args_slot < self.signature.len() {
-            if let FunctionParameter::ArgsArray(..) = self.signature[self.args_slot] {
-
-            } else {
-                panic!("not a *args {}", self.signature[self.args_slot].name());
-            }
-
-
-            let vec: Vec<Value> = args_iter.map(|v| v.clone()).collect();
-            if slots[self.args_slot].is_none() {
-                slots[self.args_slot] = Some(Value::from(vec));
-            } else {
-                panic!("how did this happen to me?")
-            }
-        } else {
-            // TODO: verify consumed args
-        }
-    }
-
-    /*
-        Normal(String),
-        Optional(String),
-        WithDefaultValue(String, Value),
-        ArgsArray(String),
-        KWArgsDict(String),
-
-    */
-
-    pub fn get_normal(
-        &self,
-        slot: usize,
-        name: &str,
-        slots: &mut Vec<Option<Value>>,
-    ) -> Option<Value> {
-        if self.has_extra_positional {
-            panic!("weird, there shouldn't be extra positional args at this point");
-        }
-
-        // println!("maybe expanding args");
-        if slot < self.args_start + self.args_len {
-            if let Some(..) = self.star_args {
-                // println!("really expanding args");
-                self.expand_args(slots);
-            }
-            return slots[slot].clone();
-        }
-
-        if let Some(a) = &self.star_kwargs {
-            return a.at(Value::new(name.to_string())).ok();
-        }
-
         None
     }
 }
@@ -510,18 +305,30 @@ impl<'a> DefInvoker<'a> {
     }
 
     pub fn invoke(mut self, call_stack: &CallStack, type_values: TypeValues) -> ValueResult {
-        let extra_positional = std::mem::replace(&mut self.extra_positional, Vec::new());
-        let extra_named = std::mem::replace(&mut self.extra_named, SmallMap::new());
+        if self.args_slot < self.name_to_index.len() {
+            self.slots[self.args_slot] = Some(Value::from(std::mem::replace(&mut self.extra_positional, Vec::new())));
+        }
+        if self.kwargs_slot < self.name_to_index.len() {
+            self.slots[self.kwargs_slot] = Some(Value::new(Dictionary::from(std::mem::replace(&mut self.extra_named, SmallMap::new()))));
+        }
+
+        let sig = &self.def.signature;
+
         let lazy_params: IndexedParams<'a> = IndexedParams::new(
-            &self.def.signature,
+            sig,
             self.name_to_index,
-            self.args_slot,
-            self.idx,
-            extra_positional,
-            extra_named,
-            self.star_args.take(),
-            self.star_kwargs.take(),
         );
+
+        for i in 0..sig.len() {
+            match &sig[i] {
+                FunctionParameter::WithDefaultValue(_, def) => {
+                    if self.slots[i].is_none() {
+                        self.slots[i] = Some(def.clone());
+                    }
+                }
+                _ => {},
+            }
+        }       
 
         let locals = IndexedLocals::with_state(
             self.name_to_index,
@@ -555,7 +362,22 @@ impl<'a> DefInvoker<'a> {
     }
 
     pub fn push_args(&mut self, v: Value) {
-        self.star_args = Some(v);
+        let len = v.length().unwrap();
+        let iter_holder = v.iter().unwrap();
+        let mut iter = iter_holder.into_iter();
+
+        while self.idx < self.args_slot {
+            if let Some(v) = iter.next() {
+                self.slots[self.idx] = Some(v);
+                self.idx += 1;
+            } else {
+                return;
+            }
+        }
+
+        let len = self.extra_positional.len() + (len as usize);
+        self.extra_positional.reserve(len);
+        self.extra_positional.extend(iter);
     }
 
     pub fn push_named(&mut self, name: &str, v: Value) {
@@ -570,6 +392,21 @@ impl<'a> DefInvoker<'a> {
     }
 
     pub fn push_kwargs(&mut self, v: Value) {
-        self.star_kwargs = Some(v);
+        let dict = v.downcast_ref::<Dictionary>().unwrap();
+        for (k, v) in dict.items_iter() {
+            if let Some(s) = k.downcast_ref::<String>() {
+                self.push_named(&s, v.clone());
+            } else {
+                let name = k.to_str();
+                match self.name_to_index.get(&name) {
+                    Some(sl) if *sl < self.num_params => {
+                        self.slots[*sl] = Some(v.clone());
+                    }
+                    _ => {
+                        self.extra_named.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
     }
 }
