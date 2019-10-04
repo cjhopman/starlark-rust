@@ -49,6 +49,9 @@ use starlark::values::*;
 
 const EXIT_CODE_FAILURE: i32 = 2;
 
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "starlark-repl",
