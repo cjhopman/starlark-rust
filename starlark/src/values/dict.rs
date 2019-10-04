@@ -128,10 +128,6 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone>
 impl TypedValue for Dictionary {
     type Holder = Mutable<Dictionary>;
 
-    fn clone_mut(&self) -> Value {
-        Value::new(Dictionary{content: self.content.clone()})
-    }
-
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {

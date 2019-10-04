@@ -83,10 +83,6 @@ impl TypedValue for i64 {
     type Holder = Immutable<Self>;
     const TYPE: &'static str = "int";
 
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
-    }
-
     fn new_value(self) -> Value {
         Value(ValueInner::Int(ValueHolder::new(self)))
     }

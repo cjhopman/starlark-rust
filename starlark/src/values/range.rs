@@ -52,10 +52,6 @@ impl Iterator for RangeIterator {
 impl TypedValue for Range {
     const TYPE: &'static str = "range";
 
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
-    }
-
     fn to_str(&self) -> String {
         self.to_repr()
     }

@@ -428,10 +428,6 @@ impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> Ty
 {
     type Holder = Immutable<NativeFunction<F>>;
 
-    fn clone_mut(&self) -> Value {
-        panic!()
-    }
-
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {
@@ -471,10 +467,6 @@ impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> Ty
 
 impl TypedValue for WrappedMethod {
     type Holder = Immutable<WrappedMethod>;
-
-    fn clone_mut(&self) -> Value {
-        panic!()
-    }
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,

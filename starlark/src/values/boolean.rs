@@ -34,10 +34,6 @@ impl TypedValue for bool {
         Value(ValueInner::Bool(ValueHolder::new(self)))
     }
 
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
-    }
-
     fn to_repr(&self) -> String {
         if *self {
             "True".to_owned()

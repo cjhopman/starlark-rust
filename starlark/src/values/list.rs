@@ -102,10 +102,6 @@ impl List {
 impl TypedValue for List {
     type Holder = Mutable<List>;
 
-    fn clone_mut(&self) -> Value {
-        self.clone().new_value()
-    }
-
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {
@@ -264,11 +260,6 @@ impl TypedValue for List {
             result.content.push(x.clone());
         }
         Ok(result)
-    }
-
-    fn add_assign(&mut self, other: &List) -> Result<(), ValueError> {
-        self.content.extend(other.content.iter().cloned());
-        Ok(())
     }
 
     /// Repeat `other` times this tuple.

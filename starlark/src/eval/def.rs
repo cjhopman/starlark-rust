@@ -57,8 +57,8 @@ impl DefCompiled {
                 .or_insert(len);
         }
 
-        let params : Result<Vec<_>, _> = params.into_iter().map(|p| Parameter::compile(p)).collect();
-        let params = params?;
+        // let params : Result<Vec<_>, _> = params.into_iter().map(|p| Parameter::compile(p)).collect();
+        // let params = params?;
 
         DefCompiled::collect_locals(&suite, &mut local_names_to_indices);
 
@@ -179,10 +179,6 @@ impl Def {
 
 impl TypedValue for Def {
     type Holder = Immutable<Def>;
-
-    fn clone_mut(&self) -> Value {
-        panic!()
-    }
 
     const TYPE: &'static str = "function";
 

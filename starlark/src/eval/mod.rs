@@ -647,8 +647,8 @@ fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
         }
         Expr::Identifier(ref i) => t(context.env.get(&i.node), i),
         Expr::Slot(slot, ref i) => t(context.env.get_slot(slot, &i.node), i),
-        Expr::CompiledLiteral(_, ref v) => Ok(v.clone()),
-        Expr::Literal(_) => panic!("literals should be compiled at this point: {}", expr.node),
+        Expr::IntLiteral(ref i) => Ok(Value::new(i.node)),
+        Expr::StringLiteral(ref s) => Ok(Value::new(s.node.clone())),
         Expr::Not(ref s) => Ok(Value::new(!eval_expr(s, context)?.to_bool())),
         Expr::Minus(ref s) => t(eval_expr(s, context)?.minus(), expr),
         Expr::Plus(ref s) => t(eval_expr(s, context)?.plus(), expr),
@@ -752,9 +752,7 @@ fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
             }
             make_set(values, context, expr.span)
         }
-        Expr::ListComprehension(..) | Expr::DictComprehension(..) | Expr::SetComprehension(..) => {
-            unreachable!("comprehension not possible here {}", ***expr)
-        }
+        Expr::ListComprehension(..) | Expr::DictComprehension(..) | Expr::SetComprehension(..) => unreachable!(),
         Expr::ComprehensionCompiled(ref e) => e.eval(expr.span, context),
     }
 }
@@ -814,14 +812,12 @@ fn eval_assign_modify<F>(
     op: F,
 ) -> EvalResult
 where
-    F: FnOnce(Value, Value) -> Result<Value, ValueError>,
+    F: FnOnce(&Value, Value) -> Result<Value, ValueError>,
 {
-    // println!("eval {}", ***stmt);
     let lhs = transform(lhs, context)?;
     let l = eval_transformed(&lhs, context)?;
     let r = eval_expr(rhs, context)?;
-    let v = t(op(l, r), stmt)?;
-    set_transformed(&lhs, context, v)
+    set_transformed(&lhs, context, t(op(&l, r), stmt)?)
 }
 
 pub fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult {
@@ -841,30 +837,22 @@ pub fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult
             set_expr(lhs, context, rhs)
         }
         Statement::Assign(ref lhs, AssignOp::Increment, ref rhs) => {
-            //eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::add(&l, r))
-            
-            eval_assign_modify(stmt, lhs, rhs, context, |mut l, r| {
-                match l.add_assign(r)? {
-                    Some(v) => Ok(v),
-                    None => Ok(l),
-                }
-            })
-            
+            eval_assign_modify(stmt, lhs, rhs, context, Value::add)
         }
         Statement::Assign(ref lhs, AssignOp::Decrement, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::sub(&l, r))
+            eval_assign_modify(stmt, lhs, rhs, context, Value::sub)
         }
         Statement::Assign(ref lhs, AssignOp::Multiplier, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::mul(&l, r))
+            eval_assign_modify(stmt, lhs, rhs, context, Value::mul)
         }
         Statement::Assign(ref lhs, AssignOp::Divider, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::div(&l, r))
+            eval_assign_modify(stmt, lhs, rhs, context, Value::div)
         }
         Statement::Assign(ref lhs, AssignOp::FloorDivider, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::floor_div(&l, r))
+            eval_assign_modify(stmt, lhs, rhs, context, Value::floor_div)
         }
         Statement::Assign(ref lhs, AssignOp::Percent, ref rhs) => {
-            eval_assign_modify(stmt, lhs, rhs, context, |l, r| Value::percent(&l, r))
+            eval_assign_modify(stmt, lhs, rhs, context, Value::percent)
         }
         Statement::If(ref cond, ref st) => {
             if eval_expr(cond, context)?.to_bool() {

@@ -210,9 +210,9 @@ Operand: AstExpr = {
     <l:@L> <i:identifier> <r:@R>
         => Expr::Identifier(i).to_ast(file_span.subspan(l, r)),
     <l:@L> <i:integer> <r:@R>
-        => Expr::Literal(AstLiteral::IntLiteral(i)).to_ast(file_span.subspan(l, r)),
+        => Expr::IntLiteral(i).to_ast(file_span.subspan(l, r)),
     <l:@L> <s:string> <r:@R>
-        => Expr::Literal(AstLiteral::StringLiteral(s)).to_ast(file_span.subspan(l, r)),
+        => Expr::StringLiteral(s).to_ast(file_span.subspan(l, r)),
     <l:@L> "[" <e:COMMA<Test>> "]" <r:@R>
         => Expr::List(e).to_ast(file_span.subspan(l, r)),
     ListComp,

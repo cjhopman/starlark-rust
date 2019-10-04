@@ -120,10 +120,6 @@ impl Value {
         t.new_value()
     }
 
-    pub fn clone_cow(&self) -> Value {
-        self.value_holder().clone_cow().unwrap_or_else(|| self.clone())
-    }
-
     fn value_holder(&self) -> &(dyn ValueHolderDyn + 'static) {
         match &self.0 {
             ValueInner::None(n) => n,
@@ -174,7 +170,7 @@ pub trait Mutability {
     const MUTABLE: bool;
 
     /// Type of cell which contains the object.
-    type Cell: ContentCell<Content = Self::Content>;
+    type Cell: RefCellOrImmutable<Content = Self::Content>;
 
     /// Type of cell which contains mutability flag.
     type MutabilityCell: MutabilityCell;
@@ -255,14 +251,6 @@ impl PartialEq for DataPtr {
 pub struct FunctionId(pub DataPtr);
 
 impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
-    fn clone_cow(&self) -> Option<Value> {
-        if T::Holder::MUTABLE {
-            
-        } else {
-            None
-        }
-    }
-
     fn as_any_mut(&self) -> Result<Option<RefMut<'_, dyn Any>>, ValueError> {
         self.mutability.get().test()?;
         Ok(if T::Holder::MUTABLE {
@@ -471,19 +459,6 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
         self.content.borrow().minus().map(Value::new)
     }
 
-    fn add_assign(&self, other: Value) -> Result<Option<Value>, ValueError> {
-        match other.downcast_ref::<T>() {
-            Some(other) => match self.content.try_borrow_mut() {
-                Ok(mut b) => {
-                    b.add_assign(&*other)?;
-                    Ok(None)
-                }
-                Err(_) => Ok(Some(Value::new(self.content.borrow().add(&other)?))),
-            },
-            None => Err(ValueError::IncorrectParameterType),
-        }
-    }
-
     fn add(&self, other: Value) -> Result<Value, ValueError> {
         match other.downcast_ref::<T>() {
             Some(other) => self.content.borrow().add(&*other).map(Value::new),
@@ -522,7 +497,6 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
 /// `ValueHolder` as virtual functions to put into `Value`.
 /// Should not be used or implemented directly.
 trait ValueHolderDyn {
-    fn clone_cow(&self) -> Option<Value>;
     /// This function panics is value is borrowed,
     /// `None` is returned for immutable types,
     /// and `Err` is returned when value is locked for iteration or frozen.
@@ -602,8 +576,6 @@ trait ValueHolderDyn {
 
     fn add(&self, other: Value) -> ValueResult;
 
-    fn add_assign(&self, other: Value) -> Result<Option<Value>, ValueError>;
-
     fn sub(&self, other: Value) -> ValueResult;
 
     fn mul(&self, other: Value) -> ValueResult;
@@ -633,8 +605,6 @@ pub trait TypedValue: Sized + 'static {
     fn new_value(self) -> Value {
         Value(ValueInner::Other(Rc::new(ValueHolder::new(self))))
     }
-
-    fn clone_mut(&self) -> Value;
 
     /// Return a list of values to be used in freeze or descendant check operations.
     ///
@@ -991,14 +961,6 @@ pub trait TypedValue: Sized + 'static {
         })
     }
 
-    fn add_assign(&mut self, _other: &Self) -> Result<(), ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "+=".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(Self::TYPE.to_owned()),
-        })
-    }
-
     /// Substract `other` from the current value.
     ///
     /// # Examples
@@ -1215,14 +1177,6 @@ impl Value {
     }
     pub fn add(&self, other: Value) -> ValueResult {
         self.value_holder().add(other)
-    }
-    pub fn add_assign(&mut self, other: Value) -> Result<Option<Value>, ValueError> {
-        match self.0 {
-            ValueInner::None(_) => panic!("can't += on None"),
-            ValueInner::Int(ref mut i) => i.add_assign(other),
-            ValueInner::Bool(ref mut b) => panic!("can't += on True/False"),
-            ValueInner::Other(ref mut rc) => rc.add_assign(other),
-        }
     }
     pub fn sub(&self, other: Value) -> ValueResult {
         self.value_holder().sub(other)
@@ -1454,7 +1408,7 @@ pub mod string;
 pub mod tuple;
 
 use crate::values::mutability::{
-    ImmutableCell, ImmutableMutability, MutabilityCell, MutableMutability, ContentCell,
+    ImmutableCell, ImmutableMutability, MutabilityCell, MutableMutability, RefCellOrImmutable,
     RefOrRef,
 };
 use crate::values::none::NoneType;
@@ -1502,10 +1456,6 @@ mod tests {
 
         /// Define the NoneType type
         impl TypedValue for WrappedNumber {
-            fn clone_mut(&self) -> Value {
-                Value::new(WrappedNumber(self.0))
-            }
-
             fn to_repr(&self) -> String {
                 format!("{:?}", self)
             }
