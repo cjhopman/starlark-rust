@@ -597,7 +597,8 @@ fn main() {
 
             let info = buck::ParserInfo::new(path.parent().unwrap().into(), config.clone(), shared);
             let parser = buck::Parser::new(Rc::new(info));
-            let res = parser.eval_file(&i, dialect, &mut global.child(&i), global.clone());
+            let mut env = parser.create_env(path.to_str().unwrap());
+            let res = parser.eval_file(&i, dialect, &mut env, global.clone());
 
             for (k, _) in &*recorder.borrow() {
                 println!("{:?}", k);
