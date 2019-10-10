@@ -31,7 +31,7 @@ impl CloneForCell for String {
 }
 
 impl TypedValue for String {
-    type Holder = MutableCell<String>;
+    type Holder = ImmutableCell<String>;
 
     fn find_in<'a>(&'_ self, map: &'a SmallMap<String, Value>) -> Option<&'a Value> {
         map.get(self)
