@@ -516,7 +516,7 @@ fn eval_dot<'a>(
     context: &EvaluationContext,
 ) -> EvalResult {
     let left = eval_expr(e, context)?;
-    if let Some(v) = context.type_values.get_type_value(&left, &s.node) {
+    if let Some(v) = context.type_values.get_type_value(left.get_type(), &s.node) {
         if v.get_type() == "function" {
             // Insert self so the method see the object it is acting on
             Ok(WrappedMethod::new(left, v))
@@ -593,7 +593,7 @@ fn eval_transformed<'a>(transformed: &TransformedExpr, context: &EvaluationConte
             Ok(Value::from(r))
         }
         TransformedExpr::Dot(ref left, ref s, ref span) => {
-            if let Some(v) = context.type_values.get_type_value(left, &s) {
+            if let Some(v) = context.type_values.get_type_value(left.get_type(), &s) {
                 if v.get_type() == "function" {
                     // Insert self so the method see the object it is acting on
                     Ok(WrappedMethod::new(left.clone(), v))

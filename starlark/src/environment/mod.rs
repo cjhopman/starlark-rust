@@ -157,8 +157,8 @@ impl Environment {
     }
 
     /// Get a type value if it exists (e.g. list.index).
-    fn get_type_value(&self, obj: &Value, id: &str) -> Option<Value> {
-        self.env.borrow().get_type_value(obj, id)
+    fn get_type_value(&self, obj_type: &str, id: &str) -> Option<Value> {
+        self.env.borrow().get_type_value(obj_type, id)
     }
 
     /// List the attribute of a type
@@ -303,17 +303,17 @@ impl EnvironmentContent {
     }
 
     /// Get a type value if it exists (e.g. list.index).
-    fn get_type_value(&self, obj: &Value, id: &str) -> Option<Value> {
-        match self.type_objs.get(obj.get_type()) {
+    fn get_type_value(&self, obj_type: &str, id: &str) -> Option<Value> {
+        match self.type_objs.get(obj_type) {
             Some(ref d) => match d.get(id) {
                 Some(v) => Some(v.clone()),
                 None => match self.parent {
-                    Some(ref p) => p.get_type_value(obj, id),
+                    Some(ref p) => p.get_type_value(obj_type, id),
                     None => None,
                 },
             },
             None => match self.parent {
-                Some(ref p) => p.get_type_value(obj, id),
+                Some(ref p) => p.get_type_value(obj_type, id),
                 None => None,
             },
         }
@@ -362,8 +362,8 @@ impl TypeValues {
     }
 
     /// Get a type value if it exists (e.g. list.index).
-    pub fn get_type_value(&self, obj: &Value, id: &str) -> Option<Value> {
-        self.env.get_type_value(obj, id)
+    pub fn get_type_value(&self, obj_type: &str, id: &str) -> Option<Value> {
+        self.env.get_type_value(obj_type, id)
     }
 
     /// List the attribute of a type

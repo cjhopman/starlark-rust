@@ -369,7 +369,7 @@ starlark_module! {global_functions =>
     getattr(env env, #a, #attr: String, #default = NoneType::None) {
         match a.get_attr(&attr) {
             Ok(v) => Ok(v),
-            x => match env.get_type_value(&a, &attr) {
+            x => match env.get_type_value(a.get_type(), &attr) {
                 Some(v) => if v.get_type() == "function" {
                     // Insert self so the method see the object it is acting on
                     Ok(WrappedMethod::new(a.clone(), v))
@@ -388,7 +388,7 @@ starlark_module! {global_functions =>
     /// `hasattr(x, name)` reports whether x has an attribute (field or method) named `name`.
     hasattr(env env, #a, #attr: String) {
         Ok(Value::new(
-            match env.get_type_value(&a, &attr) {
+            match env.get_type_value(a.get_type(), &attr) {
                 Some(..) => true,
                 None => match a.has_attr(&attr) {
                     Ok(v) => v,
