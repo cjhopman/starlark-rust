@@ -14,7 +14,9 @@
 
 //! Implementation of `def`.
 
-use crate::environment::{Environment, EnvironmentError, TypeValues};
+use crate::environment::{
+    Environment, LocalEnvironment, EnvironmentError, FrozenEnvironment, TypeValues, WeakFrozenEnvironment,
+};
 use crate::eval::call_stack::CallStack;
 use crate::eval::EvalResult;
 use crate::eval::{
@@ -26,7 +28,7 @@ use crate::values::dict::Dictionary;
 use crate::values::error::ValueError;
 use crate::values::function::*;
 use crate::values::none::NoneType;
-use crate::values::{function, mutability::ImmutableCell, TypedValue, Value, ValueResult};
+use crate::values::{function, mutability::ImmutableCell, Binder, TypedValue, Value, ValueResult};
 use codemap::{CodeMap, Spanned};
 use codemap_diagnostic::Diagnostic;
 use std::cell::RefCell;
@@ -43,6 +45,7 @@ pub struct DefCompiled {
     pub(crate) params: Vec<AstParameter>,
     pub(crate) suite: AstStatement,
     local_names_to_indices: HashMap<String, usize>,
+    non_local_names: HashSet<String>,
     args_slot: usize,
     kwargs_slot: usize,
 }
@@ -64,7 +67,8 @@ impl DefCompiled {
         let params: Result<Vec<_>, _> = params.into_iter().map(|p| Parameter::compile(p)).collect();
         let params = params?;
 
-        DefCompiled::collect_locals(&suite, &mut local_names_to_indices);
+        let mut non_local_names = HashSet::new();
+        DefCompiled::collect_locals(&suite, &mut local_names_to_indices, &mut non_local_names);
 
         let suite = DefCompiled::transform_locals(suite, &local_names_to_indices);
 
@@ -85,6 +89,10 @@ impl DefCompiled {
             }
         }
 
+        for name in local_names_to_indices.keys() {
+            non_local_names.remove(name);
+        }
+
         Ok(DefCompiled {
             name,
             params,
@@ -92,35 +100,50 @@ impl DefCompiled {
             kwargs_slot,
             suite,
             local_names_to_indices,
+            non_local_names,
         })
     }
 
-    fn collect_locals(stmt: &AstStatement, local_names_to_indices: &mut HashMap<String, usize>) {
+    fn collect_locals(
+        stmt: &AstStatement,
+        local_names_to_indices: &mut HashMap<String, usize>,
+        all_refs: &mut HashSet<String>,
+    ) {
         match stmt.node {
-            Statement::Assign(ref dest, ..) => {
+            Statement::Assign(ref dest, _, ref expr) => {
                 Expr::collect_locals_from_assign_expr(dest, local_names_to_indices);
+
+                Expr::collect_refs(dest, all_refs);
+                Expr::collect_refs(expr, all_refs);
             }
-            Statement::For(ref dest, _, ref body) => {
+            Statement::For(ref dest, ref cond, ref body) => {
                 Expr::collect_locals_from_assign_expr(dest, local_names_to_indices);
-                DefCompiled::collect_locals(body, local_names_to_indices);
+
+                Expr::collect_refs(dest, all_refs);
+                Expr::collect_refs(cond, all_refs);
+                DefCompiled::collect_locals(body, local_names_to_indices, all_refs);
             }
             Statement::Statements(ref stmts) => {
                 for stmt in stmts {
-                    DefCompiled::collect_locals(stmt, local_names_to_indices);
+                    DefCompiled::collect_locals(stmt, local_names_to_indices, all_refs);
                 }
             }
-            Statement::If(_, ref then_block) => {
-                DefCompiled::collect_locals(then_block, local_names_to_indices);
+            Statement::If(ref cond, ref then_block) => {
+                Expr::collect_refs(cond, all_refs);
+                DefCompiled::collect_locals(then_block, local_names_to_indices, all_refs);
             }
-            Statement::IfElse(_, ref then_block, ref else_block) => {
-                DefCompiled::collect_locals(then_block, local_names_to_indices);
-                DefCompiled::collect_locals(else_block, local_names_to_indices);
+            Statement::IfElse(ref cond, ref then_block, ref else_block) => {
+                Expr::collect_refs(cond, all_refs);
+                DefCompiled::collect_locals(then_block, local_names_to_indices, all_refs);
+                DefCompiled::collect_locals(else_block, local_names_to_indices, all_refs);
             }
-            Statement::Break
-            | Statement::Continue
-            | Statement::Pass
-            | Statement::Return(..)
-            | Statement::Expression(..) => {}
+            Statement::Return(Some(ref expr)) => {
+                Expr::collect_refs(expr, all_refs);
+            }
+            Statement::Expression(ref expr) => {
+                Expr::collect_refs(expr, all_refs);
+            }
+            Statement::Return(None) | Statement::Break | Statement::Continue | Statement::Pass => {}
             Statement::Load(..) | Statement::Def(..) | Statement::DefCompiled(..) => unreachable!(),
         }
     }
@@ -156,7 +179,9 @@ impl DefCompiled {
                     DefCompiled::transform_locals(else_block, locals),
                 ),
                 s @ Statement::Break | s @ Statement::Continue | s @ Statement::Pass => s,
-                Statement::Def(..) | Statement::Load(..) | Statement::DefCompiled(..) => unreachable!(),
+                Statement::Def(..) | Statement::Load(..) | Statement::DefCompiled(..) => {
+                    unreachable!()
+                }
                 Statement::Expression(expr) => {
                     Statement::Expression(Expr::transform_locals_to_slots(expr, locals))
                 }
@@ -170,10 +195,10 @@ impl DefCompiled {
 
 /// Starlark function internal representation and implementation of [`TypedValue`].
 pub(crate) struct Def {
+    bound: bool,
     signature: Vec<FunctionParameter>,
     function_type: FunctionType,
-    param_names: HashSet<String>,
-    captured_env: Environment,
+    captured_env: Option<HashMap<String, Value>>,
     map: Arc<Mutex<CodeMap>>,
     stmt: DefCompiled,
 }
@@ -184,25 +209,38 @@ impl Def {
         signature: Vec<FunctionParameter>,
         stmt: DefCompiled,
         map: Arc<Mutex<CodeMap>>,
-        env: Environment,
     ) -> Value {
-        // This can be implemented by delegating to `Function::new`,
-        // but having a separate type allows slight more efficient implementation
-        // and optimizations in the future.
-        let param_names = signature
-            .iter()
-            .filter(|e| e.is_normal())
-            .map(|e| e.name().to_string())
-            .collect();
-
         Value::new(Def {
+            bound: false,
             function_type: FunctionType::Def(stmt.name.node.clone(), module),
-            param_names,
             signature,
             stmt,
-            captured_env: env,
+            captured_env: None,
             map,
         })
+    }
+
+    pub fn capture_env(&self, vars : &dyn Binder) -> Result<HashMap<String, Value>, ValueError> {
+        let mut captured_env = HashMap::new();
+        for n in &self.stmt.non_local_names {
+            match vars.get(n)? {
+                Some(v) => { captured_env.insert(n.clone(), v); },
+                None => {
+                    // TODO
+                    /*
+                        let v = vars
+                            .get(n)
+                            .ok_or_else(|| crate::values::error::RuntimeError {
+                                code: "bad",
+                                message: format!("couldn't find {}", n),
+                                label: "".to_string(),
+                            })?;
+                        captured_env.insert((*n).clone(), v);
+                    */
+                }
+            }
+        }
+        Ok(captured_env)
     }
 }
 
@@ -232,6 +270,32 @@ impl TypedValue for Def {
             self.stmt.args_slot,
             self.stmt.kwargs_slot,
         )))
+    }
+
+    fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError> {
+        if self.bound {
+            return Ok(None);
+        }
+
+        // println!("binding {}", self.stmt.name.node);
+        if self.stmt.non_local_names.is_empty() {
+            // println!("nothing to bind");
+            return Ok(None);
+        }
+
+        let captured_env = self.capture_env(vars)?;
+
+        // println!("non-local names: {:?}", self.stmt.non_local_names);
+        // println!("bound names: {:?}", captured_env.keys());
+
+        Ok(Some(Value::new(Def {
+            bound: true,
+            function_type: self.function_type.clone(),
+            signature: self.signature.clone(),
+            stmt: self.stmt.clone(),
+            captured_env: Some(captured_env),
+            map: self.map.clone(),
+        })))
     }
 }
 
@@ -380,7 +444,7 @@ impl<'a> IndexedParams<'a> {
             let s = k.to_str();
             match self.local_names_to_indices.get(&s) {
                 // we might have a match for a non-param local
-                Some(found_slot) if *found_slot < slot=> {
+                Some(found_slot) if *found_slot < slot => {
                     // println!("got slot {} for {}", slot, s);
                     if slots[*found_slot].is_none() {
                         slots[*found_slot] = Some(kwargs.at(k).unwrap());
@@ -398,7 +462,9 @@ impl<'a> IndexedParams<'a> {
 
     fn expand_args(&self, slots: &mut Vec<Option<Value>>) {
         let star_args = self.star_args.as_ref().expect("shouldn't be possible");
-        let iter = star_args.iter().expect(&format!("odd {}", self.star_args.as_ref().unwrap()));
+        let iter = star_args
+            .iter()
+            .expect(&format!("odd {}", self.star_args.as_ref().unwrap()));
         let mut args_iter = iter.into_iter();
         let mut idx = self.args_start;
 
@@ -416,11 +482,9 @@ impl<'a> IndexedParams<'a> {
 
         if self.args_slot < self.signature.len() {
             if let FunctionParameter::ArgsArray(..) = self.signature[self.args_slot] {
-
             } else {
                 panic!("not a *args {}", self.signature[self.args_slot].name());
             }
-
 
             let vec: Vec<Value> = args_iter.map(|v| v.clone()).collect();
             if slots[self.args_slot].is_none() {
@@ -483,6 +547,8 @@ pub struct DefInvoker<'a> {
     extra_named: SmallMap<Value, Value>,
     star_kwargs: Option<Value>,
 
+    captured_env: HashMap<String, Value>,
+
     slots: Vec<Option<Value>>,
 }
 
@@ -497,7 +563,7 @@ impl<'a> DefInvoker<'a> {
         Self {
             def,
             name_to_index,
-            num_params : def.stmt.params.len(),
+            num_params: def.stmt.params.len(),
             idx: 0,
             args_slot,
             extra_positional: Vec::new(),
@@ -505,11 +571,13 @@ impl<'a> DefInvoker<'a> {
             kwargs_slot,
             extra_named: SmallMap::new(),
             star_kwargs: None,
+            captured_env: HashMap::new(),
             slots: vec![None; slots_count],
         }
     }
 
-    pub fn invoke(mut self, call_stack: &CallStack, type_values: TypeValues) -> ValueResult {
+    pub fn invoke(mut self, context: &EvaluationContext) -> ValueResult {
+        // println!("invoking {}", self.def.stmt.name.node);
         let extra_positional = std::mem::replace(&mut self.extra_positional, Vec::new());
         let extra_named = std::mem::replace(&mut self.extra_named, SmallMap::new());
         let lazy_params: IndexedParams<'a> = IndexedParams::new(
@@ -529,10 +597,37 @@ impl<'a> DefInvoker<'a> {
             lazy_params,
         );
 
+        let module_env = context.module_env();
+
+        let local_capture;
+        let captured_env;
+
+        if let Some(ref env) = self.def.captured_env {
+            // println!("pre-bound");
+            captured_env = env;
+        } else {
+            // println!("late-binding");
+            struct LocalBinder<'a> {
+                context: &'a LocalEnvironment,
+            }
+
+            impl<'a> Binder for LocalBinder<'a> {
+                fn get(&self, name: &str) -> Result<Option<Value>, ValueError> {
+                    match self.context.get(name) {
+                        Ok(v) => Ok(Some(v)),
+                        _ => Ok(None),
+                    }
+                }
+            }
+            local_capture = self.def.capture_env(&LocalBinder{context: module_env})?;
+            captured_env = &local_capture;
+        }
+
+
         let mut ctx = EvaluationContext {
-            call_stack: call_stack.to_owned(),
-            env: EvaluationContextEnvironment::Function(self.def.captured_env.clone(), locals),
-            type_values,
+            call_stack: context.call_stack().to_owned(),
+            env: EvaluationContextEnvironment::Function(module_env, captured_env, locals),
+            type_values: context.type_values(),
             map: self.def.map.clone(),
         };
 

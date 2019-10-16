@@ -13,6 +13,7 @@
 // limitations under the License.
 
 //! A command line interpreter for Starlark, provide a REPL.
+#![allow(unused_imports)]
 
 extern crate structopt;
 
@@ -24,7 +25,9 @@ extern crate lazy_static;
 
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
-use starlark::environment::Environment;
+use starlark::environment::{Environment, FrozenEnvironment, LocalEnvironment};
+
+
 use starlark::environment::TypeValues;
 use starlark::eval::interactive::{eval, eval_file, EvalError};
 use starlark::eval::EvaluationContext;
@@ -32,7 +35,8 @@ use starlark::eval::FileLoader;
 use starlark::stdlib::global_environment_with_extensions;
 use starlark::syntax::ast::AstStatement;
 use starlark::syntax::dialect::Dialect;
-use starlark::syntax::parser::{parse, parse_file};
+use starlark::syntax::errors::SyntaxError;
+use starlark::syntax::parser::{parse,  parse_file};
 use starlark::values::Value;
 use starlark_repl::{print_function, repl};
 use std::io::prelude::*;
@@ -112,8 +116,7 @@ use std;
 type ValueMap = SmallMap<::std::string::String, starlark::values::Value>;
 
 fn some_func(
-    __call_stack: &starlark::eval::call_stack::CallStack,
-    __env: starlark::environment::TypeValues,
+    __ctx: &starlark::eval::EvaluationContext,
     mut args: ParameterParser,
     recorder: &std::rc::Rc<std::cell::RefCell<SmallMap<String, ValueMap>>>,
 ) -> starlark::values::ValueResult {
@@ -127,17 +130,14 @@ fn some_func(
 }
 
 fn provider_impl(
-    __call_stack: &starlark::eval::call_stack::CallStack,
-    __env: starlark::environment::TypeValues,
+    __ctx: &starlark::eval::EvaluationContext,
     mut args: starlark::values::function::ParameterParser,
 ) -> starlark::values::ValueResult {
     #[allow(unused_mut)]
     let mut kwargs: SmallMap<::std::string::String, starlark::values::Value> =
         args.next_arg()?.into_kw_args_dict("kwargs")?;
     args.check_no_more_args()?;
-    Ok(Value::new(starlark::stdlib::structs::StarlarkStruct {
-        fields: kwargs,
-    }))
+    Ok(Value::new(starlark::stdlib::structs::StarlarkStruct::new(kwargs)))
 }
 
 starlark_module! {global_functions =>
@@ -183,9 +183,9 @@ starlark_module! {global_functions =>
         arch.insert("is_unknown".to_string(), Value::new(false));
         arch.insert("is_x86_64".to_string(), Value::new(true));
         let mut info : SmallMap<String, Value> = SmallMap::new();
-        info.insert("os".to_string(), Value::new(starlark::stdlib::structs::StarlarkStruct{fields: os}));
-        info.insert("arch".to_string(), Value::new(starlark::stdlib::structs::StarlarkStruct{fields: arch}));
-        Ok(Value::new(starlark::stdlib::structs::StarlarkStruct{fields: info}))
+        info.insert("os".to_string(), Value::new(starlark::stdlib::structs::StarlarkStruct::new(os)));
+        info.insert("arch".to_string(), Value::new(starlark::stdlib::structs::StarlarkStruct::new(arch)));
+        Ok(Value::new(starlark::stdlib::structs::StarlarkStruct::new(info)))
 
     }
 
@@ -204,10 +204,10 @@ starlark_module! {global_functions =>
 }
 
 fn register_rule_def(
-    env: starlark::environment::Environment,
+    mut env: LocalEnvironment,
     recorder: std::rc::Rc<std::cell::RefCell<SmallMap<String, ValueMap>>>,
     name: &str,
-) -> starlark::environment::Environment {
+) -> LocalEnvironment {
     let mut signature = Vec::new();
     signature.push(starlark::values::function::FunctionParameter::KWArgsDict(
         "kwargs".to_owned(),
@@ -216,7 +216,7 @@ fn register_rule_def(
         name,
         starlark::values::function::NativeFunction::new(
             name.to_owned(),
-            move |c, t, p| some_func(c, t, p, &recorder),
+            move |c, p| some_func(c, p, &recorder),
             signature,
         ),
     )
@@ -225,9 +225,9 @@ fn register_rule_def(
 }
 
 fn register_rule_exists(
-    env: starlark::environment::Environment,
+    mut env: LocalEnvironment,
     recorder: std::rc::Rc<std::cell::RefCell<SmallMap<String, ValueMap>>>,
-) -> starlark::environment::Environment {
+) -> LocalEnvironment {
     let mut signature = Vec::new();
     signature.push(starlark::values::function::FunctionParameter::Normal(
         "rule_name".to_owned(),
@@ -236,7 +236,7 @@ fn register_rule_exists(
         "rule_exists",
         starlark::values::function::NativeFunction::new(
             "rule_exists".to_owned(),
-            move |c, t, mut p| {
+            move |_c, mut p| {
                 let k: String = p.next_arg()?.into_normal("")?;
                 let exists = recorder.borrow().contains_key(&k);
                 Ok(Value::new(exists))
@@ -248,29 +248,29 @@ fn register_rule_exists(
     env
 }
 
-fn register_natives(env: starlark::environment::Environment) -> Environment {
+fn register_natives(mut env: LocalEnvironment) -> LocalEnvironment {
     let mut map = SmallMap::new();
-    env.for_each_var(|k, v| {
+    env.env().for_each_var(|k, v| {
         map.insert(k.clone().into(), v.clone());
     });
 
     env.set(
         "native",
-        Value::new(starlark::stdlib::structs::StarlarkStruct { fields: map }),
+        Value::new(starlark::stdlib::structs::StarlarkStruct::new(map))
     )
     .unwrap();
     env
 }
 
 use starlark::eval::EvalException;
-use std::{collections::HashMap, path::Path, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 mod buck {
     use super::*;
 
     pub struct SharedState {
-        pub map: Arc<Mutex<HashMap<String, Environment>>>,
-        pub parent_env: Environment,
+        pub map: Arc<Mutex<HashMap<String, FrozenEnvironment>>>,
+        pub parent_env: FrozenEnvironment,
         pub codemap: Arc<Mutex<CodeMap>>,
         pub cells: Rc<HashMap<String, PathBuf>>,
     }
@@ -300,7 +300,7 @@ mod buck {
     use regex::Regex;
 
     impl FileLoader for ParserFileLoader {
-        fn load(&self, path: &str) -> Result<Environment, EvalException> {
+        fn load(&self, path: &str) -> Result<FrozenEnvironment, EvalException> {
             lazy_static! {
                 static ref RE: Regex =
                     Regex::new("(@(?P<cell>[^/]*))?(//(?P<package>[^:]*)?)?:(?P<filename>.*)")
@@ -349,7 +349,14 @@ mod buck {
                     TypeValues::new(self.info.shared.parent_env.clone()),
                 )
                 .map_err(|e| EvalException::DiagnosedError(e))?;
-            env.freeze();
+
+            let env = match env.frozen() {
+                Ok(e) => e,
+                Err(e) => {
+                    panic!("unexpected err loading {:?}: {:?}", path, e);
+                }
+            };
+
             self.info
                 .shared
                 .map
@@ -373,8 +380,8 @@ mod buck {
                 info: self.info.clone(),
             }
         }
-        pub fn create_env(&self, path: &str) -> Environment {
-            let env = self.info.shared.parent_env.child(path);
+        pub fn create_env(&self, path: &str) -> LocalEnvironment {
+            let mut env = self.info.shared.parent_env.child(path);
             let package = self.info.package.to_str().unwrap().to_string();
             let config = self.info.config.clone();
 
@@ -395,7 +402,7 @@ mod buck {
                 "read_config",
                 starlark::values::function::NativeFunction::new(
                     "read_config".to_owned(),
-                    move |c, t, mut p| {
+                    move |_c, mut p| {
                         let section: String = p.next_arg()?.into_normal("section")?;
                         let key: String = p.next_arg()?.into_normal("key")?;
                         let default: Value = p.next_arg()?.into_normal("default")?;
@@ -414,7 +421,7 @@ mod buck {
                 "package_name",
                 starlark::values::function::NativeFunction::new(
                     "package_name".to_owned(),
-                    move |c, t, p| Ok(Value::new(package.clone())),
+                    move |_c, _p| Ok(Value::new(package.clone())),
                     Vec::new(),
                 ),
             )
@@ -424,7 +431,7 @@ mod buck {
                 "repository_name",
                 starlark::values::function::NativeFunction::new(
                     "repository_name".to_owned(),
-                    move |c, t, p| Ok(Value::new("".to_string())),
+                    move |_c, _p| Ok(Value::new("".to_string())),
                     Vec::new(),
                 ),
             )
@@ -438,16 +445,12 @@ mod buck {
             map: &Arc<Mutex<CodeMap>>,
             path: &str,
             build: Dialect,
-            env: &mut Environment,
+            env: &mut LocalEnvironment,
             type_values: TypeValues,
         ) -> Result<Value, Diagnostic> {
-            let context = EvaluationContext::new(
-                env.clone(),
-                type_values,
-                self.new_file_loader(),
-                map.clone(),
-            );
-            let v = match starlark::eval::eval_stmt(&parse_file(map, path, build)?, &context) {
+            let mut context =
+                EvaluationContext::new(env, &type_values, self.new_file_loader(), map.clone());
+            let v = match starlark::eval::eval_stmt(&parse_file(map, path, build)?, &mut context) {
                 Ok(v) => Ok(v),
                 Err(p) => Err(p.into()),
             };
@@ -460,24 +463,18 @@ mod buck {
             map: &Arc<Mutex<CodeMap>>,
             path: &str,
             build: Dialect,
-            env: &mut Environment,
-            file_loader_env: Environment,
+            env: &mut LocalEnvironment,
+            file_loader_env: FrozenEnvironment,
         ) -> Result<Value, Diagnostic> {
-            self.super_eval_file(
-                map,
-                path,
-                build,
-                env,
-                TypeValues::new(file_loader_env.clone()),
-            )
+            self.super_eval_file(map, path, build, env, TypeValues::new(file_loader_env))
         }
 
         pub fn eval_file(
             &self,
             path: &str,
             dialect: Dialect,
-            env: &mut Environment,
-            file_loader_env: Environment,
+            env: &mut LocalEnvironment,
+            file_loader_env: FrozenEnvironment,
         ) -> Result<Option<Value>, EvalError> {
             self.transform_result(
                 self.simple_eval_file(
@@ -575,7 +572,7 @@ fn main() {
     }
 
     let global = register_rule_exists(global, recorder.clone());
-    global.freeze();
+    let global = global.frozen().unwrap();
 
     let dialect = if opt.build_file {
         Dialect::Build
@@ -619,7 +616,7 @@ fn main() {
     }
     if opt.repl || (free_args_empty && command.is_none()) {
         println!("Welcome to Starlark REPL, press Ctrl+D to exit.");
-        repl(&global, dialect, ast);
+        repl(global.clone(), dialect, ast);
     }
     if let Some(command) = command {
         let path = "[command flag]";
@@ -627,11 +624,12 @@ fn main() {
             let codemap = Arc::new(Mutex::new(CodeMap::new()));
             maybe_print_ast_or_exit(parse(&codemap, path, &command, dialect), &codemap);
         } else {
+            let mut child = global.child("[command flag]");
             maybe_print_or_exit(eval(
                 "[command flag]",
                 &command,
                 dialect,
-                &mut global.child("[command flag]"),
+                &mut child,
                 global.clone(),
             ));
         }

@@ -15,7 +15,7 @@
 //! Define simpler version of the evaluation function,
 //! which does not support `load(...)` statement.
 
-use crate::environment::{Environment, TypeValues, LOAD_NOT_SUPPORTED_ERROR_CODE};
+use crate::environment::{FrozenEnvironment, LocalEnvironment, TypeValues, LOAD_NOT_SUPPORTED_ERROR_CODE};
 use crate::eval::{EvalException, FileLoader};
 use crate::syntax::dialect::Dialect;
 use crate::values::Value;
@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 pub struct NoLoadFileLoader;
 
 impl FileLoader for NoLoadFileLoader {
-    fn load(&self, _path: &str) -> Result<Environment, EvalException> {
+    fn load(&self, _path: &str) -> Result<FrozenEnvironment, EvalException> {
         Err(EvalException::DiagnosedError(Diagnostic {
             level: Level::Error,
             message: "ErrorFileLoader does not support loading".to_owned(),
@@ -55,7 +55,7 @@ pub fn eval(
     path: &str,
     content: &str,
     dialect: Dialect,
-    env: &mut Environment,
+    env: &mut LocalEnvironment,
     type_values: TypeValues,
 ) -> Result<Value, Diagnostic> {
     super::eval(

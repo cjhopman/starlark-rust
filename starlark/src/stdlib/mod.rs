@@ -21,7 +21,7 @@ use std::error::Error;
 use std::num::NonZeroI64;
 use std::sync;
 
-use crate::environment::{Environment, TypeValues};
+use crate::environment::{Environment, LocalEnvironment, TypeValues};
 use crate::eval::noload::eval;
 use crate::syntax::dialect::Dialect;
 use crate::values::dict::Dictionary;
@@ -53,13 +53,13 @@ starlark_module! {global_functions =>
     /// ```python
     /// fail("this is an error")  # Will fail with "this is an error"
     /// ```
-    fail(call_stack st, msg) {
+    fail(context ctx, msg) {
         starlark_err!(
             USER_FAILURE_ERROR_CODE,
             format!(
                 "fail(): {}{}",
                 msg.to_str(),
-                st.print_with_newline_before(),
+                ctx.call_stack().print_with_newline_before(),
             ),
             msg.to_str()
         )
@@ -555,7 +555,7 @@ starlark_module! {global_functions =>
     /// max("two", "three", "four", key=len)  == "three"  # the longest
     /// # )"#).unwrap());
     /// ```
-    max(call_stack cs, env e, *args, ?key) {
+    max(context ctx, *args, ?key) {
         let args = if args.len() == 1 {
             args.swap_remove(0)
         } else {
@@ -582,11 +582,11 @@ starlark_module! {global_functions =>
             Some(key) => {
                 let mut invoker = key.new_invoker()?;
                 invoker.push_pos(max.clone());
-                let mut cached = invoker.invoke(cs, e.clone())?;
+                let mut cached = invoker.invoke(ctx)?;
                 for i in it {
                     let mut invoker = key.new_invoker()?;
                     invoker.push_pos(i.clone());
-                    let keyi = invoker.invoke(cs, e.clone())?;
+                    let keyi = invoker.invoke(ctx)?;
                     if cached.compare(&keyi)? == Ordering::Less {
                         max = i;
                         cached = keyi;
@@ -616,7 +616,7 @@ starlark_module! {global_functions =>
     /// min("two", "three", "four", key=len)    == "two"   # the shortest
     /// # )"#).unwrap());
     /// ```
-    min(call_stack cs, env e, *args, ?key) {
+    min(context ctx, *args, ?key) {
         let args = if args.len() == 1 {
             args.swap_remove(0)
         } else {
@@ -643,11 +643,11 @@ starlark_module! {global_functions =>
             Some(key) => {
                 let mut invoker = key.new_invoker()?;
                 invoker.push_pos(min.clone());
-                let mut cached = invoker.invoke(cs, e.clone())?;
+                let mut cached = invoker.invoke(ctx)?;
                 for i in it {
                     let mut invoker = key.new_invoker()?;
                     invoker.push_pos(i.clone());
-                    let keyi = invoker.invoke(cs, e.clone())?;
+                    let keyi = invoker.invoke(ctx)?;
                     if cached.compare(&keyi)? == Ordering::Greater {
                         min = i;
                         cached = keyi;
@@ -826,7 +826,7 @@ starlark_module! {global_functions =>
     /// sorted(["two", "three", "four"], key=len, reverse=True)  == ["three", "four", "two"] # longest to shortest
     /// # )"#).unwrap());
     /// ```
-    sorted(call_stack cs, env e, #x, ?key, reverse = false) {
+    sorted(context ctx, #x, ?key, reverse = false) {
         let it = x.iter()?;
         let x = it.iter();
         let mut it = match key {
@@ -840,7 +840,7 @@ starlark_module! {global_functions =>
                     inv.push_pos(el.clone());
                     v.push((
                         el,
-                        inv.invoke(cs, e.clone())?
+                        inv.invoke(ctx)?
                     ));
                 }
                 v
@@ -971,8 +971,8 @@ starlark_module! {global_functions =>
 ///
 /// For example `stdlib::global_environment().freeze().child("test")` create a child environment
 /// of this global environment that have been frozen.
-pub fn global_environment() -> Environment {
-    let env = Environment::new("global");
+pub fn global_environment() -> LocalEnvironment {
+    let mut env = LocalEnvironment::new("global");
     env.set("None", Value::new(NoneType::None)).unwrap();
     env.set("True", Value::new(true)).unwrap();
     env.set("False", Value::new(false)).unwrap();
@@ -982,7 +982,7 @@ pub fn global_environment() -> Environment {
 }
 
 /// Default global environment with added non-standard `struct` and `set` extensions.
-pub fn global_environment_with_extensions() -> Environment {
+pub fn global_environment_with_extensions() -> LocalEnvironment {
     let env = global_environment();
     let env = structs::global(env);
     crate::linked_hash_set::global(env)
@@ -994,7 +994,8 @@ pub fn global_environment_with_extensions() -> Environment {
 pub fn starlark_default(snippet: &str) -> Result<bool, Diagnostic> {
     let map = sync::Arc::new(sync::Mutex::new(CodeMap::new()));
     let env = global_environment_with_extensions();
-    let mut test_env = env.freeze().child("test");
+    let env = env.frozen().unwrap();
+    let mut test_env = env.child("test");
     match eval(
         &map,
         "<test>",
@@ -1024,14 +1025,15 @@ pub mod tests {
 
     pub fn starlark_default_fail(snippet: &str) -> Result<bool, Diagnostic> {
         let map = sync::Arc::new(sync::Mutex::new(CodeMap::new()));
-        let mut env = global_environment().freeze().child("test");
+        let global = global_environment().frozen().unwrap();
+        let mut env = global.child("test");
         match eval(
             &map,
             "<test>",
             snippet,
             Dialect::Bzl,
             &mut env,
-            TypeValues::new(global_environment()),
+            TypeValues::new(global),
         ) {
             Ok(v) => Ok(v.to_bool()),
             Err(d) => Err(d),

@@ -85,6 +85,7 @@ use crate::environment::TypeValues;
 
 use crate::eval::call_stack;
 use crate::eval::call_stack::CallStack;
+use crate::environment::LocalEnvironment;
 use crate::values::error::ValueError;
 use crate::values::function::FunctionInvoker;
 use crate::values::iter::{FakeTypedIterable, RefIterable, TypedIterable};
@@ -94,6 +95,7 @@ use std::borrow::BorrowMut;
 use std::borrow::Cow;
 use std::cell::{RefCell, RefMut};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt;
 use std::marker;
 use std::rc::Rc;
@@ -113,6 +115,10 @@ enum ValueInner {
     Bool(ValueHolder<bool>),
     Int(ValueHolder<i64>),
     Other(Rc<dyn ValueHolderDyn>),
+}
+
+pub trait Binder {
+    fn get(&self, name: &str) -> Result<Option<Value>, ValueError>;
 }
 
 /// A value in Starlark.
@@ -265,6 +271,10 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
             .borrow()
             .function_id()
             .unwrap_or(FunctionId(self.data_ptr()))
+    }
+
+    fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError> {
+        self.content.borrow().bind(vars)
     }
 
     /// Freezes the current value.
@@ -515,6 +525,8 @@ trait ValueHolderDyn {
 
     fn freeze(&self);
 
+    fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError>;
+
     fn freeze_for_iteration(&self);
 
     fn unfreeze_for_iteration(&self);
@@ -625,6 +637,10 @@ pub trait TypedValue: Sized + 'static {
     /// ```
     fn values_for_descendant_check_and_freeze<'a>(&'a self)
         -> Box<dyn Iterator<Item = Value> + 'a>;
+
+    fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError> {
+        Ok(None)
+    }
 
     /// Return function id to detect recursion.
     ///
@@ -1103,6 +1119,9 @@ impl fmt::Debug for Value {
 impl Value {
     pub fn freeze(&mut self) {
         self.value_holder().freeze()
+    }
+    pub fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError> {
+        self.value_holder().bind(vars)
     }
     pub fn freeze_for_iteration(&mut self) {
         self.value_holder().freeze_for_iteration()

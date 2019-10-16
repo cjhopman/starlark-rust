@@ -150,7 +150,7 @@ mod test {
     fn test_simple() {
         let env = global_environment();
         let env = global(env);
-        env.freeze();
+        let env = env.frozen().unwrap();
 
         let mut child = env.child("my");
 

@@ -15,7 +15,7 @@
 //! Define simpler version of the evaluation function
 use super::Dialect;
 use super::{EvalException, FileLoader};
-use crate::environment::{Environment, TypeValues};
+use crate::environment::{Environment, FrozenEnvironment, LocalEnvironment, TypeValues};
 use crate::values::*;
 use codemap::CodeMap;
 use codemap_diagnostic::Diagnostic;
@@ -25,13 +25,13 @@ use std::sync::{Arc, Mutex};
 /// A simple FileLoader that load file from disk and cache the result in a hashmap.
 #[derive(Clone)]
 pub struct SimpleFileLoader {
-    map: Arc<Mutex<HashMap<String, Environment>>>,
-    parent_env: Environment,
+    map: Arc<Mutex<HashMap<String, FrozenEnvironment>>>,
+    parent_env: FrozenEnvironment,
     codemap: Arc<Mutex<CodeMap>>,
 }
 
 impl SimpleFileLoader {
-    pub fn new(map: &Arc<Mutex<CodeMap>>, parent_env: Environment) -> SimpleFileLoader {
+    pub fn new(map: &Arc<Mutex<CodeMap>>, parent_env: FrozenEnvironment) -> SimpleFileLoader {
         SimpleFileLoader {
             map: Arc::new(Mutex::new(HashMap::new())),
             parent_env,
@@ -41,7 +41,7 @@ impl SimpleFileLoader {
 }
 
 impl FileLoader for SimpleFileLoader {
-    fn load(&self, path: &str) -> Result<Environment, EvalException> {
+    fn load(&self, path: &str) -> Result<FrozenEnvironment, EvalException> {
         {
             let lock = self.map.lock().unwrap();
             if lock.contains_key(path) {
@@ -59,12 +59,15 @@ impl FileLoader for SimpleFileLoader {
         ) {
             return Err(EvalException::DiagnosedError(d));
         }
+
+        unimplemented!()
+        /*
         env.freeze();
-        self.map
-            .lock()
-            .unwrap()
-            .insert(path.to_owned(), env.clone());
-        Ok(env)
+                         self.map
+                             .lock()
+                             .unwrap()
+                             .insert(path.to_owned(), env.clone());
+                         Ok(env) */
     }
 }
 
@@ -85,8 +88,8 @@ pub fn eval(
     path: &str,
     content: &str,
     dialect: Dialect,
-    env: &mut Environment,
-    file_loader_env: Environment,
+    env: &mut LocalEnvironment,
+    file_loader_env: FrozenEnvironment,
 ) -> Result<Value, Diagnostic> {
     super::eval(
         map,
@@ -114,8 +117,8 @@ pub fn eval_file(
     map: &Arc<Mutex<CodeMap>>,
     path: &str,
     build: Dialect,
-    env: &mut Environment,
-    file_loader_env: Environment,
+    env: &mut LocalEnvironment,
+    file_loader_env: FrozenEnvironment,
 ) -> Result<Value, Diagnostic> {
     super::eval_file(
         map,

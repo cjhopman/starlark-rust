@@ -21,7 +21,7 @@ use crate::values::dict::Dictionary;
 use crate::values::{TypedValue, Value};
 use codemap::{Span, Spanned};
 use codemap_diagnostic::Diagnostic;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter;
 
 /// For clause followed by zero or more if clauses.
@@ -109,7 +109,35 @@ pub enum ComprehensionCompiled {
     Dict(AstExpr, AstExpr, Vec<ClauseForCompiled>),
 }
 
+fn clause_collect_refs(clause: &Vec<ClauseForCompiled>, refs: &mut HashSet<String>) {
+    for c in clause {
+        Expr::collect_refs(&c.var, refs);
+        Expr::collect_refs(&c.over, refs);
+        for e in &c.ifs {
+            Expr::collect_refs(e, refs);
+        }
+    }
+}
+
 impl ComprehensionCompiled {
+    pub fn collect_refs(compr: &ComprehensionCompiled, refs: &mut HashSet<String>) {
+        match compr {
+            ComprehensionCompiled::List(expr, clause) => {
+                Expr::collect_refs(expr, refs);
+                clause_collect_refs(clause, refs);
+            }
+            ComprehensionCompiled::Set(expr, clause) => {
+                Expr::collect_refs(expr, refs);
+                clause_collect_refs(clause, refs);
+            }
+            ComprehensionCompiled::Dict(key, val, clause) => {
+                Expr::collect_refs(key, refs);
+                Expr::collect_refs(val, refs);
+                clause_collect_refs(clause, refs);
+            }
+        }
+    }
+
     pub(crate) fn new_list(
         expr: AstExpr,
         clauses: Vec<AstClause>,
@@ -172,7 +200,7 @@ impl ComprehensionCompiled {
         }
     }
 
-    pub(crate) fn eval(&self, expr_span: Span, context: &EvaluationContext) -> EvalResult {
+    pub(crate) fn eval(&self, expr_span: Span, context: &mut EvaluationContext) -> EvalResult {
         match self {
             ComprehensionCompiled::List(expr, fors) => {
                 let mut values = Vec::new();
@@ -207,7 +235,7 @@ impl ComprehensionCompiled {
 fn eval_one_dimensional_comprehension(
     e: &AstExpr,
     clauses: &[ClauseForCompiled],
-    context: &EvaluationContext,
+    context: &mut EvaluationContext,
     collect: &mut Vec<Value>,
 ) -> Result<(), EvalException> {
     // println!("eval1 {:?} {:?}", ***e, clauses);
@@ -215,21 +243,21 @@ fn eval_one_dimensional_comprehension(
         let mut iterable = eval_expr(&c.over, context)?;
         iterable.freeze_for_iteration();
         'f: for i in &t(iterable.iter(), &c.over.span)? {
-            let context = context.child(&c.local_names_to_indices);
-            set_expr(&c.var, &context, i)?;
+            let mut context = context.child(&c.local_names_to_indices);
+            set_expr(&c.var, &mut context, i)?;
 
             for ifc in &c.ifs {
-                if !eval_expr(ifc, &context)?.to_bool() {
+                if !eval_expr(ifc, &mut context)?.to_bool() {
                     continue 'f;
                 }
             }
 
-            eval_one_dimensional_comprehension(e, tl, &context, collect)?;
+            eval_one_dimensional_comprehension(e, tl, &mut context, collect)?;
         }
 
         iterable.unfreeze_for_iteration();
     } else {
-        collect.push(eval_expr(e, &context)?);
+        collect.push(eval_expr(e, context)?);
     }
     Ok(())
 }

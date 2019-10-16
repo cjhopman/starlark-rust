@@ -37,12 +37,12 @@ pub struct CallStack {
 
 impl CallStack {
     /// Push an element to the stack
-    pub fn push(&mut self, function: &Value, code_map: Arc<Mutex<CodeMap>>, pos: Pos) {
+    pub fn push(&mut self, _function: &Value, _code_map: Arc<Mutex<CodeMap>>, _pos: Pos) {
         // self.stack.push(Frame(function, code_map, pos));
     }
 
     /// Test if call stack contains a function with given id.
-    pub fn contains(&self, function_id: FunctionId) -> bool {
+    pub fn contains(&self, _function_id: FunctionId) -> bool {
         false
         /*
         self.stack

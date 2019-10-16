@@ -16,6 +16,7 @@
 use super::*;
 use crate::environment::{Environment, EnvironmentError, TypeValues};
 use crate::eval::def::DefInvoker;
+use crate::eval::EvaluationContext;
 use crate::small_map::SmallMap;
 use crate::values::error::RuntimeError;
 use crate::values::none::NoneType;
@@ -138,7 +139,7 @@ impl From<FunctionArg> for Value {
 }
 
 pub type StarlarkFunctionPrototype =
-    dyn Fn(&CallStack, TypeValues, Vec<FunctionArg>) -> ValueResult;
+    dyn Fn(&EvaluationContext, Vec<FunctionArg>) -> ValueResult;
 // Wrapper for method that have been affected the self object
 pub(crate) struct WrappedMethod {
     method: Value,
@@ -838,10 +839,10 @@ pub enum FunctionInvoker<'a> {
 }
 
 impl<'a> FunctionInvoker<'a> {
-    pub fn invoke(self, call_stack: &CallStack, type_values: TypeValues) -> ValueResult {
+    pub fn invoke(self, context: &EvaluationContext) -> ValueResult {
         match self {
-            FunctionInvoker::Native(inv) => inv.invoke(call_stack, type_values),
-            FunctionInvoker::Def(inv) => inv.invoke(call_stack, type_values),
+            FunctionInvoker::Native(inv) => inv.invoke(context),
+            FunctionInvoker::Def(inv) => inv.invoke(context),
         }
     }
 
@@ -1016,7 +1017,7 @@ impl<'a> ParameterParser<'a> {
 }
 
 pub struct NativeFunctionInvoker<'a> {
-    function: &'a dyn Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult,
+    function: &'a dyn Fn(&EvaluationContext, ParameterParser) -> ValueResult,
     signature: &'a [FunctionParameter],
     function_type: &'a FunctionType,
     positional: Vec<Value>,
@@ -1026,7 +1027,7 @@ pub struct NativeFunctionInvoker<'a> {
 }
 
 impl<'a> NativeFunctionInvoker<'a> {
-    pub fn new<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult>(
+    pub fn new<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult>(
         func: &'a NativeFunction<F>,
     ) -> Self {
         Self {
@@ -1040,7 +1041,7 @@ impl<'a> NativeFunctionInvoker<'a> {
         }
     }
 
-    pub fn invoke(self, call_stack: &CallStack, type_values: TypeValues) -> ValueResult {
+    pub fn invoke(self, context: &EvaluationContext) -> ValueResult {
         let parser = ParameterParser::new(
             self.signature,
             self.function_type,
@@ -1049,7 +1050,7 @@ impl<'a> NativeFunctionInvoker<'a> {
             self.args,
             self.kwargs_arg,
         )?;
-        (*self.function)(call_stack, type_values, parser)
+        (*self.function)(context, parser)
     }
 
     pub fn push_pos(&mut self, v: Value) {
@@ -1073,7 +1074,7 @@ impl<'a> NativeFunctionInvoker<'a> {
 ///
 /// Public to be referenced in macros.
 #[doc(hidden)]
-pub struct NativeFunction<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult> {
+pub struct NativeFunction<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult> {
     /// Pointer to a native function.
     /// Note it is a function pointer, not `Box<Fn(...)>`
     /// to avoid generic instantiation and allocation for each native function.
@@ -1082,7 +1083,7 @@ pub struct NativeFunction<F: Fn(&CallStack, TypeValues, ParameterParser) -> Valu
     function_type: FunctionType,
 }
 
-impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> NativeFunction<F> {
+impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> NativeFunction<F> {
     pub fn new(name: String, function: F, signature: Vec<FunctionParameter>) -> Value {
         Value::new(NativeFunction {
             function,
@@ -1093,7 +1094,7 @@ impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> Na
 }
 
 /// Define the function type
-impl<F: Fn(&CallStack, TypeValues, ParameterParser) -> ValueResult + 'static> TypedValue
+impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> TypedValue
     for NativeFunction<F>
 {
     type Holder = ImmutableCell<NativeFunction<F>>;

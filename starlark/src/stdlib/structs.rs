@@ -20,7 +20,17 @@ use crate::values::*;
 
 /// `struct()` implementation.
 pub struct StarlarkStruct {
+    bound: bool,
     pub fields: SmallMap<String, Value>,
+}
+
+impl StarlarkStruct {
+    pub fn new(fields : SmallMap<String, Value>) -> Self {
+        Self {
+            bound: false,
+            fields
+        }
+    }
 }
 
 impl TypedValue for StarlarkStruct {
@@ -42,6 +52,43 @@ impl TypedValue for StarlarkStruct {
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {
         Box::new(self.fields.values().cloned())
+    }
+
+    fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError> {
+        if self.bound {
+            return Ok(None);
+        }
+
+        // println!("binding struct");
+
+        let mut bound = SmallMap::new();
+        let mut changed = false;
+
+        for (k, v) in &self.fields {
+            let b = v.bind(vars)?;
+            changed |= b.is_some();
+            bound.insert(k.to_string(), b);
+        }
+
+        if !changed {
+            return Ok(None);
+        }
+
+        let mut bound_fields = SmallMap::new();
+        for (k, v) in &self.fields {
+            match bound.remove(k).unwrap() {
+                Some(v) => {
+                    bound_fields.insert(k.to_string(), v);
+                }
+                None => {
+                    bound_fields.insert(k.to_string(), v.clone());
+                }
+            }
+        }
+        return Ok(Some(Value::new(StarlarkStruct {
+            bound: true,
+            fields: bound_fields,
+        })));
     }
 
     fn collect_repr(&self, r: &mut String) {
@@ -120,6 +167,7 @@ starlark_module! { global =>
     /// ```
     struct_(**kwargs) {
         Ok(Value::new(StarlarkStruct {
+            bound: false,
             fields: kwargs
         }))
     }

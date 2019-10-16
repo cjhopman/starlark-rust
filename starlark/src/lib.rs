@@ -72,6 +72,8 @@
 //! * [function](values::function).
 
 #![deny(intra_doc_link_resolution_failure)]
+#![allow(unused_imports)]
+#![feature(hash_set_entry)]
 
 pub mod environment;
 #[doc(hidden)]

@@ -14,7 +14,7 @@
 
 //! Defines very basic versions of the evaluation functions that are suitable for interactive use:
 //! they output diagnostic to stderr and the result value to stdout.
-use crate::environment::Environment;
+use crate::environment::{FrozenEnvironment, LocalEnvironment, Environment};
 use crate::syntax::dialect::Dialect;
 use crate::values::Value;
 use codemap::CodeMap;
@@ -50,8 +50,8 @@ pub fn eval(
     path: &str,
     content: &str,
     dialect: Dialect,
-    env: &mut Environment,
-    file_loader_env: Environment,
+    env: &mut LocalEnvironment,
+    file_loader_env: FrozenEnvironment,
 ) -> Result<Option<Value>, EvalError> {
     let map = Arc::new(Mutex::new(CodeMap::new()));
     transform_result(
@@ -74,8 +74,8 @@ pub fn eval(
 pub fn eval_file(
     path: &str,
     dialect: Dialect,
-    env: &mut Environment,
-    file_loader_env: Environment,
+    env: &mut LocalEnvironment,
+    file_loader_env: FrozenEnvironment,
 ) -> Result<Option<Value>, EvalError> {
     let map = Arc::new(Mutex::new(CodeMap::new()));
     transform_result(

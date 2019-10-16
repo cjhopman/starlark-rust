@@ -175,6 +175,107 @@ enum ArgsStage {
     Kwargs,
 }
 
+mod collector {
+    use super::*;
+
+    fn iter_collect_refs<'a, I: Iterator<Item = &'a AstExpr>>(iter: I, refs: &mut HashSet<String>) {
+        iter.for_each(|e| collect_refs(e, refs));
+    }
+
+    fn option_collect_refs(expr: &Option<AstExpr>, refs: &mut HashSet<String>) {
+        if let Some(ref e) = expr {
+            collect_refs(e, refs);
+        }
+    }
+
+    fn clause_collect_refs(clause: &AstClause, refs: &mut HashSet<String>) {
+        match &clause.node {
+            Clause::For(val, expr) => {
+                collect_refs(val, refs);
+                collect_refs(expr, refs);
+            }
+            Clause::If(expr) => collect_refs(expr, refs),
+        }
+    }
+
+    pub fn collect_refs(expr: &AstExpr, refs: &mut HashSet<String>) {
+        match &expr.node {
+            Expr::Tuple(exprs) => iter_collect_refs(exprs.iter(), refs),
+            Expr::Dot(expr, _field) => collect_refs(expr, refs),
+            Expr::Call(expr, pos, named, star_args, star_kwargs) => {
+                collect_refs(expr, refs);
+                iter_collect_refs(pos.iter(), refs);
+                iter_collect_refs(named.iter().map(|e| &e.1), refs);
+                option_collect_refs(star_args, refs);
+                option_collect_refs(star_kwargs, refs);
+            }
+            Expr::ArrayIndirection(a, i) => {
+                collect_refs(a, refs);
+                collect_refs(i, refs);
+            }
+            Expr::Slice(a, i, j, k) => {
+                collect_refs(a, refs);
+                option_collect_refs(i, refs);
+                option_collect_refs(j, refs);
+                option_collect_refs(k, refs);
+            }
+            Expr::Identifier(id) => {
+                refs.get_or_insert_with(&id.node, |k| k.clone());
+            }
+            // local variable index
+            Expr::Slot(_slot, id) => {
+                refs.get_or_insert_with(&id.node, |k| k.clone());
+            }
+            Expr::Literal(_lit) => {}
+            Expr::CompiledLiteral(_lit, _v) => {}
+            Expr::Not(expr) => {
+                collect_refs(expr, refs);
+            }
+            Expr::Minus(expr) => {
+                collect_refs(expr, refs);
+            }
+            Expr::Plus(expr) => {
+                collect_refs(expr, refs);
+            }
+            Expr::Op(_op, left, right) => {
+                collect_refs(left, refs);
+                collect_refs(right, refs);
+            }
+            Expr::If(cond, left, right) => {
+                collect_refs(cond, refs);
+                collect_refs(left, refs);
+                collect_refs(right, refs);
+            } // Order: condition, v1, v2 <=> v1 if condition else v2
+            Expr::List(exprs) => {
+                iter_collect_refs(exprs.iter(), refs);
+            }
+            Expr::Set(exprs) => {
+                iter_collect_refs(exprs.iter(), refs);
+            }
+            Expr::Dict(items) => {
+                iter_collect_refs(items.iter().map(|i| &i.0), refs);
+                iter_collect_refs(items.iter().map(|i| &i.1), refs);
+            }
+            Expr::ListComprehension(expr, clauses) => {
+                collect_refs(expr, refs);
+                clauses.iter().for_each(|c| clause_collect_refs(c, refs));
+            }
+            Expr::SetComprehension(expr, clauses) => {
+                collect_refs(expr, refs);
+                clauses.iter().for_each(|c| clause_collect_refs(c, refs));
+            }
+            Expr::DictComprehension((key, val), clauses) => {
+                collect_refs(key, refs);
+                collect_refs(val, refs);
+                clauses.iter().for_each(|c| clause_collect_refs(c, refs));
+            }
+            Expr::ComprehensionCompiled(comp) => {
+                ComprehensionCompiled::collect_refs(comp, refs);
+            }
+        }
+    }
+}
+
 impl Expr {
     pub fn is_literal(&self) -> bool {
         match self {
@@ -252,6 +353,10 @@ impl Expr {
             }
         }
         Ok(Expr::Call(f, pos_args, named_args, args_array, kwargs_dict))
+    }
+
+    pub(crate) fn collect_refs(expr: &AstExpr, refs: &mut HashSet<String>) {
+        collector::collect_refs(expr, refs);
     }
 
     pub(crate) fn collect_locals_from_assign_expr(

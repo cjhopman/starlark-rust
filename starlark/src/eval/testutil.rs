@@ -25,14 +25,14 @@ use std::sync;
 /// Execute a starlark snippet with an empty environment.
 pub fn starlark_empty(snippet: &str) -> Result<bool, Diagnostic> {
     let map = sync::Arc::new(sync::Mutex::new(CodeMap::new()));
-    let mut env = environment::Environment::new("test");
+    let mut env = environment::LocalEnvironment::new("test");
     match noload::eval(
         &map,
         "<test>",
         snippet,
         Dialect::Bzl,
         &mut env,
-        environment::TypeValues::new(environment::Environment::new("empty")),
+        environment::TypeValues::new(environment::LocalEnvironment::new("empty").frozen().unwrap()),
     ) {
         Ok(v) => Ok(v.to_bool()),
         Err(d) => {
@@ -45,15 +45,15 @@ pub fn starlark_empty(snippet: &str) -> Result<bool, Diagnostic> {
 /// Execute a starlark snippet with an empty environment.
 pub fn starlark_empty_no_diagnostic(snippet: &str) -> Result<bool, Diagnostic> {
     starlark_no_diagnostic(
-        &mut environment::Environment::new("test"),
+        &mut environment::LocalEnvironment::new("test"),
         snippet,
-        TypeValues::new(environment::Environment::new("no-type-values")),
+        TypeValues::new(environment::LocalEnvironment::new("no-type-values").frozen().unwrap()),
     )
 }
 
 /// Execute a starlark snippet with the passed environment.
 pub fn starlark_no_diagnostic(
-    env: &mut environment::Environment,
+    env: &mut environment::LocalEnvironment,
     snippet: &str,
     type_values: environment::TypeValues,
 ) -> Result<bool, Diagnostic> {

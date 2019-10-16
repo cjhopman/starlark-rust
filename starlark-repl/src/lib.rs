@@ -36,6 +36,8 @@
 //!     -h, --help          Show the usage of this program.
 //!     -r, --repl          Run a REPL after files have been parsed.
 //! ```
+#![allow(unused_imports)]
+
 use codemap;
 
 #[macro_use]
@@ -43,7 +45,7 @@ extern crate starlark;
 
 use codemap_diagnostic::{ColorConfig, Emitter};
 use linefeed::{Interface, ReadResult};
-use starlark::environment::{Environment, TypeValues};
+use starlark::environment::{Environment, FrozenEnvironment, LocalEnvironment, TypeValues};
 use starlark::eval::eval_lexer;
 use starlark::eval::simple::SimpleFileLoader;
 use starlark::syntax::dialect::Dialect;
@@ -61,8 +63,8 @@ fn print_eval<T1: Iterator<Item = LexerItem>, T2: LexerIntoIter<T1>>(
     content: &str,
     lexer: T2,
     dialect: Dialect,
-    env: &mut Environment,
-    file_loader_env: Environment,
+    env: &mut LocalEnvironment,
+    file_loader_env: FrozenEnvironment,
     ast: bool,
 ) {
     if ast {
@@ -125,7 +127,7 @@ starlark_module! {print_function =>
 /// * global_environment: the parent enviroment for the loop.
 /// * dialect: Starlark language dialect.
 /// * ast: print AST instead of evaluating.
-pub fn repl(global_environment: &Environment, dialect: Dialect, ast: bool) {
+pub fn repl(global_environment: FrozenEnvironment, dialect: Dialect, ast: bool) {
     let map = Arc::new(Mutex::new(codemap::CodeMap::new()));
     let reader = Interface::new("Starlark").unwrap();
     let mut env = global_environment.child("repl");

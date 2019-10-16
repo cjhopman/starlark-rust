@@ -19,9 +19,9 @@
 
 use crate::values::error::{RuntimeError, ValueError};
 use crate::values::*;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::ops::Deref;
+use std::sync::Arc;
+use std::{collections::HashMap, sync::Weak};
 
 // TODO: move that code in some common error code list?
 // CM prefix = Critical Module
@@ -88,124 +88,137 @@ impl From<EnvironmentError> for ValueError {
     }
 }
 
+pub trait Environment {
+    fn env(&self) -> &EnvironmentContent;
+
+    /// Get a type value if it exists (e.g. list.index).
+    fn get_type_value(&self, obj_type: &str, id: &str) -> Option<Value> {
+        self.env().get_type_value(obj_type, id)
+    }
+
+    /// List the attribute of a type
+    fn list_type_value(&self, obj: &Value) -> Vec<String> {
+        self.env().list_type_value(obj)
+    }
+
+    /// Return the name of this module
+    fn name(&self) -> String {
+        self.env().name_.clone()
+    }
+
+    /// Get the value of the variable `name`
+    fn get(&self, name: &str) -> Result<Value, EnvironmentError> {
+        self.env().get(name)
+    }
+
+    /// Return the parent environment (or `None` if there is no parent).
+    fn get_parent(&self) -> Option<&FrozenEnvironment> {
+        self.env().get_parent()
+    }
+}
+
 #[derive(Clone, Debug)]
-pub struct Environment {
-    env: Rc<RefCell<EnvironmentContent>>,
+pub struct FrozenEnvironment {
+    env: Arc<EnvironmentContent>,
+}
+
+pub struct WeakFrozenEnvironment {
+    ptr: Weak<EnvironmentContent>,
+}
+
+impl WeakFrozenEnvironment {
+    pub fn upgrade(&self) -> FrozenEnvironment {
+        FrozenEnvironment {
+            env: self.ptr.upgrade().unwrap(),
+        }
+    }
+}
+
+impl FrozenEnvironment {
+    /// Create a new child environment for this environment
+    pub fn child(&self, name: &str) -> LocalEnvironment {
+        LocalEnvironment::new_child(name, self.clone())
+    }
+
+    pub fn downgrade(&self) -> WeakFrozenEnvironment {
+        WeakFrozenEnvironment {
+            ptr: Arc::downgrade(&self.env),
+        }
+    }
+}
+
+impl Environment for FrozenEnvironment {
+    fn env(&self) -> &EnvironmentContent {
+        &*self.env
+    }
 }
 
 #[derive(Debug)]
-struct EnvironmentContent {
+pub struct LocalEnvironment {
+    env: EnvironmentContent,
+}
+
+#[derive(Debug)]
+pub struct EnvironmentContent {
     /// A name for this environment, used mainly for debugging.
     name_: String,
     /// Whether the environment is frozen or not.
     frozen: bool,
     /// Super environment that represent a higher scope than the current one
-    parent: Option<Environment>,
+    parent: Option<FrozenEnvironment>,
     /// List of variable bindings
     ///
     /// These bindings include methods for native types, e.g. `string.isalnum`.
     variables: HashMap<String, Value>,
     /// List of static values of an object per type
     type_objs: HashMap<String, HashMap<String, Value>>,
-    /// Optional function which can be used to construct set literals (i.e. `{foo, bar}`).
-    /// If not set, attempts to use set literals will raise an error.
-    set_constructor: SetConstructor,
 }
 
-// Newtype so that EnvironmentContent can derive Debug.
-struct SetConstructor((Option<Box<dyn Fn(Vec<Value>) -> ValueResult>>));
-
-impl std::fmt::Debug for SetConstructor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        if self.0.is_some() {
-            write!(f, "<set constructor>")
-        } else {
-            write!(f, "<no set constructor>")
-        }
+impl Environment for LocalEnvironment {
+    fn env(&self) -> &EnvironmentContent {
+        &self.env
     }
 }
 
-impl Environment {
+impl LocalEnvironment {
     /// Create a new environment
-    pub fn new(name: &str) -> Environment {
-        Environment {
-            env: Rc::new(RefCell::new(EnvironmentContent {
-                name_: name.to_owned(),
-                frozen: false,
-                parent: None,
-                variables: HashMap::new(),
-                type_objs: HashMap::new(),
-                set_constructor: SetConstructor(None),
-            })),
+    pub fn new(name: &str) -> Self {
+        Self {
+            env: EnvironmentContent::new(name, None),
         }
     }
 
-    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, mut func: F) {
-        let b = self.env.borrow();
-        for v in b.vars() {
-            func(v.0, v.1);
-        }
-        if let Some(p) = self.get_parent() {
-            p.for_each_var(func);
+    pub fn new_child(name: &str, parent: FrozenEnvironment) -> Self {
+        Self {
+            env: EnvironmentContent::new(name, Some(parent)),
         }
     }
 
     /// Get the object of type `obj_type`, and create it if none exists
     /// Get the object of type `obj_type`, and create it if none exists
-    pub fn add_type_value(&self, obj: &str, attr: &str, value: Value) {
-        self.env.borrow_mut().add_type_value(obj, attr, value)
+    pub fn add_type_value(&mut self, obj: &str, attr: &str, value: Value) {
+        self.env.add_type_value(obj, attr, value)
     }
 
-    /// Get a type value if it exists (e.g. list.index).
-    fn get_type_value(&self, obj_type: &str, id: &str) -> Option<Value> {
-        self.env.borrow().get_type_value(obj_type, id)
-    }
-
-    /// List the attribute of a type
-    fn list_type_value(&self, obj: &Value) -> Vec<String> {
-        self.env.borrow().list_type_value(obj)
-    }
-
-    /// Create a new child environment for this environment
-    pub fn child(&self, name: &str) -> Environment {
-        self.freeze();
-        Environment {
-            env: Rc::new(RefCell::new(EnvironmentContent {
-                name_: name.to_owned(),
-                frozen: false,
-                parent: Some(self.clone()),
-                variables: HashMap::new(),
-                type_objs: HashMap::new(),
-                set_constructor: SetConstructor(None),
-            })),
-        }
-    }
-
-    /// Create a new child environment
     /// Freeze the environment, all its value will become immutable after that
-    pub fn freeze(&self) -> &Self {
-        self.env.borrow_mut().freeze();
-        self
-    }
-
-    /// Return the name of this module
-    pub fn name(&self) -> String {
-        self.env.borrow().name_.clone()
+    pub fn frozen(mut self) -> Result<FrozenEnvironment, ValueError> {
+        let mut take = EnvironmentContent::new("", None);
+        self.env.freeze();
+        self.env.bind()?;
+        std::mem::swap(&mut self.env, &mut take);
+        Ok(FrozenEnvironment {
+            env: Arc::new(take),
+        })
     }
 
     /// Set the value of a variable in that environment.
-    pub fn set(&self, name: &str, value: Value) -> Result<(), EnvironmentError> {
-        self.env.borrow_mut().set(name, value)
-    }
-
-    /// Get the value of the variable `name`
-    pub fn get(&self, name: &str) -> Result<Value, EnvironmentError> {
-        self.env.borrow().get(name)
+    pub fn set(&mut self, name: &str, value: Value) -> Result<(), EnvironmentError> {
+        self.env.set(name, value)
     }
 
     pub fn import_symbol(
-        &self,
-        env: &Environment,
+        &mut self,
+        env: &dyn Environment,
         symbol: &str,
         new_name: &str,
     ) -> Result<(), EnvironmentError> {
@@ -217,50 +230,71 @@ impl Environment {
             _ => self.set(new_name, env.get(symbol)?),
         }
     }
+}
 
-    /// Return the parent environment (or `None` if there is no parent).
-    pub fn get_parent(&self) -> Option<Environment> {
-        self.env.borrow().get_parent()
-    }
-
-    /// Set the function which will be used to instantiate set literals encountered when evaluating
-    /// in this `Environment`. Set literals are {}s with one or more elements between, separated by
-    /// commas, e.g. `{1, 2, "three"}`.
-    ///
-    /// If this function is not called on the `Environment`, its parent's set constructor will be
-    /// used when set literals are encountered. If neither this `Environment`, nor any of its
-    /// transitive parents, have a set constructor defined, attempts to evaluate set literals will
-    /// raise and error.
-    ///
-    /// The `Value` returned by this function is expected to be a one-dimensional collection
-    /// containing no duplicates.
-    pub fn with_set_constructor(&self, constructor: Box<dyn Fn(Vec<Value>) -> ValueResult>) {
-        self.env.borrow_mut().set_constructor = SetConstructor(Some(constructor));
-    }
-
-    pub(crate) fn make_set(&self, values: Vec<Value>) -> ValueResult {
-        match self.env.borrow().set_constructor.0 {
-            Some(ref ctor) => ctor(values),
+impl Binder for EnvironmentContent {
+    fn get(&self, name: &str) -> Result<Option<Value>, ValueError> {
+        match EnvironmentContent::get(self, name).ok() {
+            Some(v) => match v.bind(self)? {
+                Some(b) => Ok(Some(b)),
+                None => Ok(Some(v)),
+            },
             None => {
-                if let Some(parent) = self.get_parent() {
-                    parent.make_set(values)
-                } else {
-                    Err(ValueError::TypeNotSupported("set".to_string()))
-                }
+                // println!("binding {} failed. not found in env {}", name, self.name_);
+                Ok(None)
             }
         }
     }
 }
 
 impl EnvironmentContent {
-    /// Create a new child environment
+    fn new(name: &str, parent: Option<FrozenEnvironment>) -> Self {
+        Self {
+            name_: name.to_owned(),
+            frozen: false,
+            parent,
+            variables: HashMap::new(),
+            type_objs: HashMap::new(),
+        }
+    }
+
     /// Freeze the environment, all its value will become immutable after that
     pub fn freeze(&mut self) {
+        if self.frozen {
+            panic!("already frozen :/")
+        }
+
+        self.frozen = true;
+        for v in self.variables.values_mut() {
+            v.freeze();
+        }
+    }
+
+    pub fn bind(&mut self) -> Result<(), ValueError> {
         if !self.frozen {
-            self.frozen = true;
-            for v in self.variables.values_mut() {
-                v.freeze();
+            panic!("not yet frozen");
+        }
+
+        let mut changed: HashMap<String, Value> = HashMap::new();
+        for (k, v) in &self.variables {
+            match v.bind(self)? {
+                Some(n) => {
+                    changed.insert(k.to_string(), n);
+                }
+                None => {}
             }
+        }
+        self.variables.extend(changed);
+
+        Ok(())
+    }
+
+    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, mut func: F) {
+        for v in self.vars() {
+            func(v.0, v.1);
+        }
+        if let Some(p) = self.get_parent() {
+            p.env().for_each_var(func);
         }
     }
 
@@ -283,7 +317,7 @@ impl EnvironmentContent {
         match self.variables.get(name) {
             Some(v) => Ok(v.clone()),
             None => match self.parent {
-                Some(ref p) => p.get(name),
+                Some(ref p) => p.env().get(name),
                 None => Err(EnvironmentError::VariableNotFound(name.to_owned())),
             },
         }
@@ -308,12 +342,12 @@ impl EnvironmentContent {
             Some(ref d) => match d.get(id) {
                 Some(v) => Some(v.clone()),
                 None => match self.parent {
-                    Some(ref p) => p.get_type_value(obj_type, id),
+                    Some(ref p) => p.env().get_type_value(obj_type, id),
                     None => None,
                 },
             },
             None => match self.parent {
-                Some(ref p) => p.get_type_value(obj_type, id),
+                Some(ref p) => p.env().get_type_value(obj_type, id),
                 None => None,
             },
         }
@@ -328,15 +362,15 @@ impl EnvironmentContent {
             }
             r
         } else if let Some(ref p) = self.parent {
-            p.list_type_value(obj)
+            p.env().list_type_value(obj)
         } else {
             Vec::new()
         }
     }
 
     /// Return the parent environment (or `None` if there is no parent).
-    pub fn get_parent(&self) -> Option<Environment> {
-        self.parent.clone()
+    pub fn get_parent(&self) -> Option<&FrozenEnvironment> {
+        self.parent.as_ref()
     }
 }
 
@@ -347,12 +381,12 @@ impl EnvironmentContent {
 /// so this struct is passed instead of full `Environment`.
 #[derive(Clone)]
 pub struct TypeValues {
-    env: Environment,
+    env: FrozenEnvironment,
 }
 
 impl TypeValues {
     /// Wrap environment.
-    pub fn new(env: Environment) -> TypeValues {
+    pub fn new(env: FrozenEnvironment) -> TypeValues {
         TypeValues { env }
     }
 

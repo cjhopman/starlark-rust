@@ -19,17 +19,18 @@
 //! All evaluation function can evaluate the full Starlark language (i.e. Bazel's
 //! .bzl files) or the BUILD file dialect (i.e. used to interpret Bazel's BUILD file).
 //! The BUILD dialect does not allow `def` statements.
-use crate::environment::{Environment, EnvironmentError, TypeValues};
+use crate::environment::{
+    Environment, EnvironmentError, FrozenEnvironment, LocalEnvironment, TypeValues,
+};
 use crate::eval::call_stack::CallStack;
 use crate::eval::def::Def;
-use crate::small_map::SmallMap;
 use crate::syntax::ast::*;
 use crate::syntax::ast::{AstExpr, AstStatement};
 use crate::syntax::dialect::Dialect;
 use crate::syntax::errors::SyntaxError;
 use crate::syntax::lexer::{LexerIntoIter, LexerItem};
 use crate::syntax::parser::{parse, parse_file, parse_lexer};
-use crate::values::error::ValueError;
+use crate::values::error::{RuntimeError, ValueError};
 use crate::values::function::{FunctionParameter, WrappedMethod};
 use crate::values::none::NoneType;
 use crate::values::*;
@@ -199,7 +200,7 @@ impl Into<Diagnostic> for EvalException {
 /// A trait for loading file using the load statement path.
 pub trait FileLoader: 'static {
     /// Open the file given by the load statement `path`.
-    fn load(&self, path: &str) -> Result<Environment, EvalException>;
+    fn load(&self, path: &str) -> Result<FrozenEnvironment, EvalException>;
 }
 
 /// Starlark `def` or comprehension local variables
@@ -281,24 +282,16 @@ impl<'a> IndexedLocals<'a> {
 /// Stacked environment for [`EvaluationContext`].
 pub(crate) enum EvaluationContextEnvironment<'a> {
     /// Module-level
-    Module(Environment, Rc<dyn FileLoader>),
+    Module(&'a mut LocalEnvironment, Rc<dyn FileLoader>),
     /// Function-level
-    Function(Environment, IndexedLocals<'a>),
+    Function(&'a LocalEnvironment, &'a HashMap<String, Value>, IndexedLocals<'a>),
     /// Scope inside function, e. g. list comprenension
     Nested(&'a EvaluationContextEnvironment<'a>, IndexedLocals<'a>),
 }
 
 impl<'a> EvaluationContextEnvironment<'a> {
-    fn env(&self) -> &Environment {
-        match self {
-            EvaluationContextEnvironment::Module(ref env, ..)
-            | EvaluationContextEnvironment::Function(ref env, ..) => env,
-            EvaluationContextEnvironment::Nested(ref parent, _) => parent.env(),
-        }
-    }
-
-    fn make_set(&self, values: Vec<Value>) -> ValueResult {
-        self.env().make_set(values)
+    fn make_set(&self, _values: Vec<Value>) -> ValueResult {
+        panic!()
     }
 
     fn loader(&self) -> Rc<dyn FileLoader> {
@@ -314,9 +307,12 @@ impl<'a> EvaluationContextEnvironment<'a> {
     fn get(&self, name: &str) -> Result<Value, EnvironmentError> {
         match self {
             EvaluationContextEnvironment::Module(env, ..) => env.get(name),
-            EvaluationContextEnvironment::Function(env, locals) => match locals.get(name)? {
+            EvaluationContextEnvironment::Function(_, vars, locals) => match locals.get(name)? {
                 Some(v) => Ok(v),
-                None => env.get(name),
+                None => vars
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(move || EnvironmentError::VariableNotFound(name.to_owned())),
             },
             EvaluationContextEnvironment::Nested(parent, locals) => match locals.get(name)? {
                 Some(v) => Ok(v),
@@ -327,16 +323,18 @@ impl<'a> EvaluationContextEnvironment<'a> {
 
     fn get_slot(&self, _slot: usize, name: &str) -> Result<Value, EnvironmentError> {
         match self {
-            EvaluationContextEnvironment::Function(_, locals) => locals.get_slot(_slot, name),
+            EvaluationContextEnvironment::Function(_, _, locals) => {
+                locals.get_slot(_slot, name)
+            }
             EvaluationContextEnvironment::Nested(_, locals) => locals.get_slot(_slot, name),
             _ => unreachable!("slot in non-indexed environment"),
         }
     }
 
-    fn set(&self, name: &str, value: Value) -> Result<(), EnvironmentError> {
+    fn set(&mut self, name: &str, value: Value) -> Result<(), EnvironmentError> {
         match self {
-            EvaluationContextEnvironment::Module(env, ..) => env.set(name, value),
-            EvaluationContextEnvironment::Function(_, locals) => {
+            EvaluationContextEnvironment::Module(ref mut env, ..) => env.set(name, value),
+            EvaluationContextEnvironment::Function(_, _, locals) => {
                 locals.set(name, value);
                 Ok(())
             }
@@ -347,9 +345,9 @@ impl<'a> EvaluationContextEnvironment<'a> {
         }
     }
 
-    fn set_slot(&self, slot: usize, name: &str, value: Value) -> Result<(), EnvironmentError> {
+    fn set_slot(&mut self, slot: usize, name: &str, value: Value) -> Result<(), EnvironmentError> {
         match self {
-            EvaluationContextEnvironment::Function(_, locals)
+            EvaluationContextEnvironment::Function(_, _, locals)
             | EvaluationContextEnvironment::Nested(_, locals) => {
                 locals.set_slot(slot, name, value);
                 Ok(())
@@ -358,9 +356,17 @@ impl<'a> EvaluationContextEnvironment<'a> {
         }
     }
 
-    fn assert_module_env(&self) -> &Environment {
+    fn module_env(&self) -> &LocalEnvironment {
         match self {
-            EvaluationContextEnvironment::Module(env, ..) => env,
+            EvaluationContextEnvironment::Module(env, _) => env,
+            EvaluationContextEnvironment::Function(env, _, _) => env,
+            EvaluationContextEnvironment::Nested(parent, _) => parent.module_env(),
+        }
+    }
+
+    fn assert_module_env(&mut self) -> &mut LocalEnvironment {
+        match self {
+            EvaluationContextEnvironment::Module(ref mut env, ..) => env,
             EvaluationContextEnvironment::Function(..)
             | EvaluationContextEnvironment::Nested(..) => {
                 unreachable!("this function is meant to be called only on module level")
@@ -375,15 +381,15 @@ pub struct EvaluationContext<'a> {
     // Locals and captured context.
     env: EvaluationContextEnvironment<'a>,
     // Globals used to resolve type values, provided by the caller.
-    type_values: TypeValues,
+    type_values: &'a TypeValues,
     call_stack: CallStack,
     map: Arc<Mutex<CodeMap>>,
 }
 
 impl<'a> EvaluationContext<'a> {
     pub fn new<T: FileLoader>(
-        env: Environment,
-        type_values: TypeValues,
+        env: &'a mut LocalEnvironment,
+        type_values: &'a TypeValues,
         loader: T,
         map: Arc<Mutex<CodeMap>>,
     ) -> Self {
@@ -395,10 +401,22 @@ impl<'a> EvaluationContext<'a> {
         }
     }
 
+    pub fn type_values(&self) -> &TypeValues {
+        self.type_values
+    }
+
+    pub fn call_stack(&self) -> &CallStack {
+        &self.call_stack
+    }
+
+    pub fn module_env(&self) -> &LocalEnvironment {
+        self.env.module_env()
+    }
+
     fn child(&'a self, name_to_index: &'a HashMap<String, usize>) -> EvaluationContext<'a> {
         EvaluationContext {
             env: EvaluationContextEnvironment::Nested(&self.env, IndexedLocals::new(name_to_index)),
-            type_values: self.type_values.clone(),
+            type_values: &self.type_values,
             call_stack: self.call_stack.clone(),
             map: self.map.clone(),
         }
@@ -410,7 +428,7 @@ fn eval_compare<F>(
     left: &AstExpr,
     right: &AstExpr,
     cmp: F,
-    context: &EvaluationContext,
+    context: &mut EvaluationContext,
 ) -> EvalResult
 where
     F: Fn(Ordering) -> bool,
@@ -425,7 +443,7 @@ fn eval_equals<F>(
     left: &AstExpr,
     right: &AstExpr,
     cmp: F,
-    context: &EvaluationContext,
+    context: &mut EvaluationContext,
 ) -> EvalResult
 where
     F: Fn(bool) -> bool,
@@ -444,7 +462,7 @@ fn eval_slice<'a>(
     start: &Option<AstExpr>,
     stop: &Option<AstExpr>,
     stride: &Option<AstExpr>,
-    context: &EvaluationContext,
+    context: &mut EvaluationContext,
 ) -> EvalResult {
     let a = eval_expr(a, context)?;
     let start = match start {
@@ -469,7 +487,7 @@ fn eval_call<'a>(
     named: &[(AstString, AstExpr)],
     args: &Option<AstExpr>,
     kwargs: &Option<AstExpr>,
-    context: &EvaluationContext,
+    context: &mut EvaluationContext,
 ) -> EvalResult {
     let f = eval_expr(e, context)?;
     let mut new_stack = context.call_stack.clone();
@@ -480,6 +498,7 @@ fn eval_call<'a>(
     }
 
     let mut invoker = t(f.new_invoker(), this)?;
+
     for expr in pos {
         invoker.push_pos(eval_expr(expr, context)?);
     }
@@ -492,19 +511,21 @@ fn eval_call<'a>(
     for &(ref k, ref v) in named.iter() {
         invoker.push_named(k, eval_expr(v, context)?);
     }
+
     if let Some(ref x) = kwargs {
         invoker.push_kwargs(eval_expr(x, context)?);
-    };
+    }
+  
+    let res = invoker.invoke(&context);
 
     t(
-    match invoker.invoke(&new_stack, context.type_values.clone()) {
-        Err(e) => {
-            println!("bt: {}", f.to_repr());
-            Err(e)
+        match res {
+            Err(e) => {
+                println!("bt: {}", f.to_repr());
+                Err(e)
+            }
+            v => v,
         },
-        v => v
-    },
-        
         this,
     )
 }
@@ -513,7 +534,7 @@ fn eval_dot<'a>(
     this: &AstExpr,
     e: &AstExpr,
     s: &AstString,
-    context: &EvaluationContext,
+    context: &mut EvaluationContext,
 ) -> EvalResult {
     let left = eval_expr(e, context)?;
     if let Some(v) = context.type_values.get_type_value(left.get_type(), &s.node) {
@@ -538,7 +559,7 @@ enum TransformedExpr {
 
 fn set_transformed<'a>(
     transformed: &TransformedExpr,
-    context: &EvaluationContext,
+    context: &mut EvaluationContext,
     new_value: Value,
 ) -> EvalResult {
     let ok = Ok(Value::new(NoneType::None));
@@ -576,7 +597,10 @@ fn set_transformed<'a>(
     }
 }
 
-fn eval_transformed<'a>(transformed: &TransformedExpr, context: &EvaluationContext) -> EvalResult {
+fn eval_transformed<'a>(
+    transformed: &TransformedExpr,
+    context: &mut EvaluationContext,
+) -> EvalResult {
     match transformed {
         TransformedExpr::Tuple(ref v, ..) => {
             let mut r = Vec::with_capacity(v.len());
@@ -621,7 +645,7 @@ fn make_set(values: Vec<Value>, context: &EvaluationContext, span: Span) -> Eval
 // This transformation by default should be a deep copy (clone).
 fn transform(
     expr: &AstExpr,
-    context: &EvaluationContext,
+    context: &mut EvaluationContext,
 ) -> Result<TransformedExpr, EvalException> {
     match expr.node {
         Expr::Dot(ref e, ref s) => Ok(TransformedExpr::Dot(
@@ -653,7 +677,7 @@ fn transform(
 }
 
 // Evaluate the AST element, i.e. mutate the environment and return an evaluation result
-fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
+fn eval_expr(expr: &AstExpr, context: &mut EvaluationContext) -> EvalResult {
     // println!("ex {}", expr.node);
     match expr.node {
         Expr::Tuple(ref v) => {
@@ -786,7 +810,7 @@ fn eval_expr(expr: &AstExpr, context: &EvaluationContext) -> EvalResult {
 }
 
 // Perform an assignment on the LHS represented by this AST element
-fn set_expr(expr: &AstExpr, context: &EvaluationContext, new_value: Value) -> EvalResult {
+fn set_expr(expr: &AstExpr, context: &mut EvaluationContext, new_value: Value) -> EvalResult {
     let ok = Ok(Value::new(NoneType::None));
     let new_value = new_value.clone();
     match expr.node {
@@ -836,7 +860,7 @@ fn eval_assign_modify<F>(
     stmt: &AstStatement,
     lhs: &AstExpr,
     rhs: &AstExpr,
-    context: &EvaluationContext,
+    context: &mut EvaluationContext,
     op: F,
 ) -> EvalResult
 where
@@ -850,9 +874,7 @@ where
     set_transformed(&lhs, context, v)
 }
 
-use std::collections::VecDeque;
-
-pub fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult {
+pub fn eval_stmt(stmt: &AstStatement, context: &mut EvaluationContext) -> EvalResult {
     let mut stmt: &AstStatement = stmt;
     let mut r = Value::from(NoneType::None);
     let mut stmts: Vec<&AstStatement> = Vec::new();
@@ -911,7 +933,7 @@ pub fn eval_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult
     Ok(r)
 }
 
-pub fn eval_single_stmt(stmt: &AstStatement, context: &EvaluationContext) -> EvalResult {
+pub fn eval_single_stmt(stmt: &AstStatement, context: &mut EvaluationContext) -> EvalResult {
     // println!("st1: {}", stmt.node);
     match stmt.node {
         Statement::Break => Err(EvalException::Break(stmt.span)),
@@ -972,7 +994,6 @@ pub fn eval_single_stmt(stmt: &AstStatement, context: &EvaluationContext) -> Eva
                 p,
                 stmt.clone(),
                 context.map.clone(),
-                context.env.assert_module_env().clone(),
             );
             t(context.env.set(&stmt.name.node, f.clone()), &stmt.name)?;
             Ok(f)
@@ -1019,14 +1040,14 @@ pub fn eval_lexer<
     content: &str,
     dialect: Dialect,
     lexer: T2,
-    env: &mut Environment,
+    env: &mut LocalEnvironment,
     type_values: TypeValues,
     file_loader: T3,
 ) -> Result<Value, Diagnostic> {
-    let context = EvaluationContext::new(env.clone(), type_values, file_loader, map.clone());
+    let mut context = EvaluationContext::new(env, &type_values, file_loader, map.clone());
     match eval_stmt(
         &parse_lexer(map, filename, content, dialect, lexer)?,
-        &context,
+        &mut context,
     ) {
         Ok(v) => Ok(v),
         Err(p) => Err(p.into()),
@@ -1050,12 +1071,12 @@ pub fn eval<T: FileLoader + 'static>(
     path: &str,
     content: &str,
     build: Dialect,
-    env: &mut Environment,
+    env: &mut LocalEnvironment,
     type_values: TypeValues,
     file_loader: T,
 ) -> Result<Value, Diagnostic> {
-    let context = EvaluationContext::new(env.clone(), type_values, file_loader, map.clone());
-    match eval_stmt(&parse(map, path, content, build)?, &context) {
+    let mut context = EvaluationContext::new(env, &type_values, file_loader, map.clone());
+    match eval_stmt(&parse(map, path, content, build)?, &mut context) {
         Ok(v) => Ok(v),
         Err(p) => Err(p.into()),
     }
@@ -1076,12 +1097,12 @@ pub fn eval_file<T: FileLoader + 'static>(
     map: &Arc<Mutex<CodeMap>>,
     path: &str,
     build: Dialect,
-    env: &mut Environment,
+    env: &mut LocalEnvironment,
     type_values: TypeValues,
     file_loader: T,
 ) -> Result<Value, Diagnostic> {
-    let context = EvaluationContext::new(env.clone(), type_values, file_loader, map.clone());
-    match eval_stmt(&parse_file(map, path, build)?, &context) {
+    let mut context = EvaluationContext::new(env, &type_values, file_loader, map.clone());
+    match eval_stmt(&parse_file(map, path, build)?, &mut context) {
         Ok(v) => Ok(v),
         Err(p) => Err(p.into()),
     }

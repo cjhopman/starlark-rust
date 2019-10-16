@@ -41,7 +41,7 @@ use codemap::Span;
 use codemap_diagnostic::Diagnostic;
 
 /// The trait that all syntax error / error linked to a location in the code must implement.
-pub(crate) trait SyntaxError {
+pub trait SyntaxError {
     /// Convert the error to a codemap diagnostic.
     ///
     /// To build this diagnostic, the method needs the file span corresponding to the parsed

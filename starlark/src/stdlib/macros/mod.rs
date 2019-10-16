@@ -33,7 +33,7 @@ macro_rules! starlark_param_name {
 #[macro_export]
 macro_rules! starlark_signature {
     ($signature:ident) => {};
-    ($signature:ident call_stack $e:ident $(,$($rest:tt)+)?) => {
+    ($signature:ident context $e:ident $(,$($rest:tt)+)?) => {
         $( starlark_signature!($signature $($rest)+) )?;
     };
     ($signature:ident env $e:ident $(,$($rest:tt)+)?) => {
@@ -114,47 +114,48 @@ macro_rules! starlark_parse_param_type {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! starlark_signature_extraction {
-    ($args:ident $call_stack:ident $env:ident) => {};
-    ($args:ident $call_stack:ident $env:ident call_stack $e:ident $(,$($rest:tt)+)?) => {
-        let $e = $call_stack;
-        $( starlark_signature_extraction!($args $call_stack $env $($rest)+) )?;
+    ($args:ident $context:ident) => {};
+    ($args:ident $context:ident env $e:ident $(,$($rest:tt)+)?) => {
+        let $e = $context.type_values();
+        $( starlark_signature_extraction!($args $context $($rest)+) )?;
     };
-    ($args:ident $call_stack:ident $env:ident env $e:ident $(,$($rest:tt)+)?) => {
-        let $e = $env;
-        $( starlark_signature_extraction!($args $call_stack $env $($rest)+) )?;
+
+    ($args:ident $context:ident context $e:ident $(,$($rest:tt)+)?) => {
+        let $e = $context;
+        $( starlark_signature_extraction!($args $context $($rest)+) )?;
     };
-    ($args:ident $call_stack:ident $env:ident * $t:ident $(: $pt:ty)? $(,$($rest:tt)+)?) => {
+    ($args:ident $context:ident * $t:ident $(: $pt:ty)? $(,$($rest:tt)+)?) => {
         #[allow(unused_mut)]
         let mut $t: starlark_parse_param_type!(* $(: $pt)?) =
             $args.next_arg()?.into_args_array(stringify!($t))?;
-        $( starlark_signature_extraction!($args $call_stack $env $($rest)+) )?
+        $( starlark_signature_extraction!($args $context $($rest)+) )?
     };
-    ($args:ident $call_stack:ident $env:ident ** $t:ident $(: $pt:ty)? $(,$($rest:tt)+)?) => {
+    ($args:ident $context:ident ** $t:ident $(: $pt:ty)? $(,$($rest:tt)+)?) => {
         #[allow(unused_mut)]
         let mut $t: starlark_parse_param_type!(** $(: $pt)?) =
             $args.next_arg()?.into_kw_args_dict(stringify!($t))?;
-        $( starlark_signature_extraction!($args $call_stack $env $($rest)+) )?
+        $( starlark_signature_extraction!($args $context $($rest)+) )?
     };
 
     // insert `(named)` tt if param is not unnamed
-    ($args:ident $call_stack:ident $env:ident $t:ident $($rest:tt)*) => {
-        starlark_signature_extraction!($args $call_stack $env (named) $t $($rest)*);
+    ($args:ident $context:ident $t:ident $($rest:tt)*) => {
+        starlark_signature_extraction!($args $context (named) $t $($rest)*);
     };
-    ($args:ident $call_stack:ident $env:ident ? $t:ident $($rest:tt)*) => {
-        starlark_signature_extraction!($args $call_stack $env ? (named) $t $($rest)*);
+    ($args:ident $context:ident ? $t:ident $($rest:tt)*) => {
+        starlark_signature_extraction!($args $context ? (named) $t $($rest)*);
     };
 
-    ($args:ident $call_stack:ident $env:ident ? $is_named:tt $t:ident $(: $pt:ty)? $(,$($rest:tt)+)?) => {
+    ($args:ident $context:ident ? $is_named:tt $t:ident $(: $pt:ty)? $(,$($rest:tt)+)?) => {
         #[allow(unused_mut)]
         let mut $t: starlark_parse_param_type!(? $(: $pt)?) =
             $args.next_arg()?.into_optional(starlark_param_name!(# $t))?;
-        $( starlark_signature_extraction!($args $call_stack $env $($rest)+) )?;
+        $( starlark_signature_extraction!($args $context $($rest)+) )?;
     };
-    ($args:ident $call_stack:ident $env:ident $is_named:tt $t:ident $(: $pt:ty)? $(= $e:expr)? $(,$($rest:tt)+)?) => {
+    ($args:ident $context:ident $is_named:tt $t:ident $(: $pt:ty)? $(= $e:expr)? $(,$($rest:tt)+)?) => {
         #[allow(unused_mut)]
         let mut $t: starlark_parse_param_type!(1 $(: $pt)?) =
             $args.next_arg()?.into_normal(starlark_param_name!($is_named $t))?;
-        $( starlark_signature_extraction!($args $call_stack $env $($rest)+) )?
+        $( starlark_signature_extraction!($args $context $($rest)+) )?
     };
 }
 
@@ -164,11 +165,10 @@ macro_rules! starlark_fun {
     ($(#[$attr:meta])* $fn:ident ( $($signature:tt)* ) { $($content:tt)* } $($($rest:tt)+)?) => {
         $(#[$attr])*
         fn $fn(
-            __call_stack: &$crate::eval::call_stack::CallStack,
-            __env: $crate::environment::TypeValues,
+            __ctx: &$crate::eval::EvaluationContext,
             mut args: $crate::values::function::ParameterParser,
         ) -> $crate::values::ValueResult {
-            starlark_signature_extraction!(args __call_stack __env $($signature)*);
+            starlark_signature_extraction!(args __ctx $($signature)*);
             args.check_no_more_args()?;
             $($content)*
         }
@@ -180,11 +180,10 @@ macro_rules! starlark_fun {
             $($($rest:tt)+)?) => {
         $(#[$attr])*
         fn $fn(
-            __call_stack: &$crate::eval::call_stack::CallStack,
-            __env: $crate::environment::TypeValues,
+            __ctx: &$crate::eval::EvaluationContext,
             mut args: $crate::values::function::ParameterParser,
         ) -> $crate::values::ValueResult {
-            starlark_signature_extraction!(args __call_stack __env $($signature)*);
+            starlark_signature_extraction!(args __ctx $($signature)*);
             args.check_no_more_args()?;
             $($content)*
         }
@@ -339,7 +338,7 @@ macro_rules! starlark_module {
         }
 
         #[doc(hidden)]
-        pub fn $name(env: $crate::environment::Environment) -> $crate::environment::Environment {
+        pub fn $name(mut env: $crate::environment::LocalEnvironment) -> $crate::environment::LocalEnvironment {
             starlark_signatures!{ env,
                 $($t)*
             }
@@ -489,6 +488,7 @@ macro_rules! convert_indices {
 #[cfg(test)]
 mod tests {
     use crate::environment::Environment;
+    use crate::environment::LocalEnvironment;
     use crate::values::none::NoneType;
     use crate::values::Value;
 
@@ -500,7 +500,7 @@ mod tests {
             }
         }
 
-        let env = global(Environment::new("root"));
+        let env = global(LocalEnvironment::new("root"));
         env.get("nop").unwrap();
     }
 }
