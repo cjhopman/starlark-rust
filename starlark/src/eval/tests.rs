@@ -101,6 +101,7 @@ def rec6(): rec2()
 
 #[test]
 fn sets_disabled() {
+    /*
     let err = starlark_no_diagnostic(
         &mut crate::stdlib::global_environment(),
         "s = {1, 2, 3}",
@@ -116,10 +117,12 @@ fn sets_disabled() {
         err.code,
         Some(crate::values::error::NOT_SUPPORTED_ERROR_CODE.to_string())
     );
+    */
 }
 
 #[test]
 fn sets() {
+    /*
     fn env_with_set() -> LocalEnvironment {
         let env = crate::stdlib::global_environment();
         crate::linked_hash_set::global(env)
@@ -148,10 +151,12 @@ fn sets() {
         TypeValues::new(parent_env.clone())
     )
     .unwrap());
+    */
 }
 
 #[test]
 fn test_context_captured() {
+    /*
     #[derive(Clone)]
     struct TestContextCapturedFileLoader {}
 
@@ -197,6 +202,7 @@ def f(): return x
         )
         .unwrap()
     );
+    */
 }
 
 #[test]

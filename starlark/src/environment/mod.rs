@@ -89,49 +89,22 @@ impl From<EnvironmentError> for ValueError {
 }
 
 pub trait Environment {
-    fn env(&self) -> &EnvironmentContent;
-
-    /// Get a type value if it exists (e.g. list.index).
-    fn get_type_value(&self, obj_type: &str, id: &str) -> Option<Value> {
-        self.env().get_type_value(obj_type, id)
-    }
-
-    /// List the attribute of a type
-    fn list_type_value(&self, obj: &Value) -> Vec<String> {
-        self.env().list_type_value(obj)
-    }
-
     /// Return the name of this module
-    fn name(&self) -> String {
-        self.env().name_.clone()
-    }
+    fn name(&self) -> String;
 
     /// Get the value of the variable `name`
-    fn get(&self, name: &str) -> Result<Value, EnvironmentError> {
-        self.env().get(name)
-    }
+    fn get(&self, name: &str) -> Result<Value, EnvironmentError>;
 
     /// Return the parent environment (or `None` if there is no parent).
-    fn get_parent(&self) -> Option<&FrozenEnvironment> {
-        self.env().get_parent()
-    }
+    fn get_parent(&self) -> Option<&FrozenEnvironment>;
+
+    // fn get_type_values(&self) -> &Arc<TypeValues>;
 }
 
 #[derive(Clone, Debug)]
 pub struct FrozenEnvironment {
-    env: Arc<EnvironmentContent>,
-}
-
-pub struct WeakFrozenEnvironment {
-    ptr: Weak<EnvironmentContent>,
-}
-
-impl WeakFrozenEnvironment {
-    pub fn upgrade(&self) -> FrozenEnvironment {
-        FrozenEnvironment {
-            env: self.ptr.upgrade().unwrap(),
-        }
-    }
+    env: Arc<EnvironmentContent<FrozenValue>>,
+    global: TypeValues,
 }
 
 impl FrozenEnvironment {
@@ -139,81 +112,219 @@ impl FrozenEnvironment {
     pub fn child(&self, name: &str) -> LocalEnvironment {
         LocalEnvironment::new_child(name, self.clone())
     }
-
-    pub fn downgrade(&self) -> WeakFrozenEnvironment {
-        WeakFrozenEnvironment {
-            ptr: Arc::downgrade(&self.env),
-        }
-    }
 }
 
 impl Environment for FrozenEnvironment {
-    fn env(&self) -> &EnvironmentContent {
-        &*self.env
+    /// Return the name of this module
+    fn name(&self) -> String {
+        self.env.name_.clone()
+    }
+
+    /// Get the value of the variable `name`
+    fn get(&self, name: &str) -> Result<Value, EnvironmentError> {
+        self.env.get(name).map(|e| e.into())
+    }
+
+    /// Return the parent environment (or `None` if there is no parent).
+    fn get_parent(&self) -> Option<&FrozenEnvironment> {
+        self.env.get_parent()
     }
 }
 
 #[derive(Debug)]
 pub struct LocalEnvironment {
-    env: EnvironmentContent,
+    env: EnvironmentContent<LocalValue>,
+    global: TypeValues,
+}
+
+#[derive(Clone, Debug)]
+pub struct GlobalEnvironment {
+    env: FrozenEnvironment,
+    type_objs: TypeValues,
+}
+
+pub struct GlobalEnvironmentBuilder {
+    env: EnvironmentContent<Value>,
+    type_objs: HashMap<String, HashMap<String, FrozenValue>>,
+}
+
+impl GlobalEnvironment {
+    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, mut func: F) {
+        self.env.env.for_each_var(func);
+    }
+
+    pub fn get_type_values(&self) -> TypeValues {
+        self.type_objs.clone()
+    }
+    /// Get a type value if it exists (e.g. list.index).
+    pub fn get_type_value(&self, obj_type: &str, id: &str) -> Option<Value> {
+        self.type_objs.get_type_value(obj_type, id)
+    }
+
+    pub fn child(&self, name: &str) -> LocalEnvironment {
+        self.env.child(name)
+    }
+
+    /// List the attribute of a type
+    pub fn list_type_value(&self, obj: &Value) -> Vec<String> {
+        self.type_objs.list_type_value(obj)
+    }
+}
+
+impl GlobalEnvironmentBuilder {
+    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, mut func: F) {
+        self.env.for_each_var(func);
+    }
+
+    pub fn new() -> Self {
+        Self {
+            env: EnvironmentContent::new("global", None),
+            type_objs: HashMap::new(),
+        }
+    }
+
+    pub fn build(mut self) -> GlobalEnvironment {
+        let type_objs = TypeValues::new(std::mem::replace(&mut self.type_objs, HashMap::new()));
+        GlobalEnvironment {
+            env: LocalEnvironment::wrap(std::mem::replace(&mut self.env, EnvironmentContent::new("", None)), type_objs.clone())
+                .frozen()
+                .unwrap(),
+            type_objs: type_objs,
+        }
+    }
+
+    pub fn set(&mut self, name: &str, value: Value) -> Result<(), EnvironmentError> {
+        self.env.variables.insert(name.to_string(), value);
+        Ok(())
+    }
+
+    /// Get the object of type `obj_type`, and create it if none exists
+    pub fn add_type_value(&mut self, obj: &str, attr: &str, value: FrozenValue) {
+        if let Some(ref mut v) = self.type_objs.get_mut(obj) {
+            v.insert(attr.to_owned(), value);
+            // Do not use a else case for the borrow checker to realize that type_objs is no
+            // longer borrowed when inserting.
+            return;
+        }
+        let mut dict = HashMap::new();
+        dict.insert(attr.to_owned(), value);
+        self.type_objs.insert(obj.to_owned(), dict);
+    }
 }
 
 #[derive(Debug)]
-pub struct EnvironmentContent {
+pub struct EnvironmentContent<ValueType> {
     /// A name for this environment, used mainly for debugging.
     name_: String,
-    /// Whether the environment is frozen or not.
-    frozen: bool,
+
     /// Super environment that represent a higher scope than the current one
     parent: Option<FrozenEnvironment>,
+
     /// List of variable bindings
-    ///
-    /// These bindings include methods for native types, e.g. `string.isalnum`.
-    variables: HashMap<String, Value>,
-    /// List of static values of an object per type
-    type_objs: HashMap<String, HashMap<String, Value>>,
+    variables: HashMap<String, ValueType>,
 }
 
 impl Environment for LocalEnvironment {
-    fn env(&self) -> &EnvironmentContent {
-        &self.env
+    /// Return the name of this module
+    fn name(&self) -> String {
+        self.env.name_.clone()
+    }
+
+    /// Get the value of the variable `name`
+    fn get(&self, name: &str) -> Result<Value, EnvironmentError> {
+        self.env.get(name).map(|e| e.clone())
+    }
+
+    /// Return the parent environment (or `None` if there is no parent).
+    fn get_parent(&self) -> Option<&FrozenEnvironment> {
+        self.env.get_parent()
     }
 }
 
 impl LocalEnvironment {
+    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, mut func: F) {
+        self.env.for_each_var(func);
+    }
+
     /// Create a new environment
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, global: TypeValues) -> Self {
         Self {
             env: EnvironmentContent::new(name, None),
+            global,
+        }
+    }
+
+    pub fn wrap(env: EnvironmentContent<Value>, global: TypeValues) -> Self {
+        Self{
+            env,
+            global
         }
     }
 
     pub fn new_child(name: &str, parent: FrozenEnvironment) -> Self {
         Self {
-            env: EnvironmentContent::new(name, Some(parent)),
+            env: EnvironmentContent::new(name, Some(parent.clone())),
+            global: parent.global.clone(),
         }
-    }
-
-    /// Get the object of type `obj_type`, and create it if none exists
-    /// Get the object of type `obj_type`, and create it if none exists
-    pub fn add_type_value(&mut self, obj: &str, attr: &str, value: Value) {
-        self.env.add_type_value(obj, attr, value)
     }
 
     /// Freeze the environment, all its value will become immutable after that
     pub fn frozen(mut self) -> Result<FrozenEnvironment, ValueError> {
-        let mut take = EnvironmentContent::new("", None);
-        self.env.freeze();
-        self.env.bind()?;
-        std::mem::swap(&mut self.env, &mut take);
+        for v in self.env.variables.values_mut() {
+            v.freeze();
+        }
+
+        struct EnvBinder<'a> {
+            bound: &'a mut HashMap<String, FrozenValue>,
+            env: &'a EnvironmentContent<LocalValue>,
+        }
+
+        impl<'a> Binder for EnvBinder<'a> {
+            fn get(&mut self, name: &str) -> Result<Option<Value>, ValueError> {
+                match self.bound.get(name) {
+                    Some(v) => Ok(Some(Value::from_frozen(v.clone()))),
+                    None => {
+                        match EnvironmentContent::get(self.env, name).ok() {
+                            Some(v) => {
+                                let b = v.val_ref().bind(self)?;
+                                self.bound.insert(name.to_string(), b.into());
+                                Ok(self.bound.get(name).map(|v| Value::from_frozen(v.clone())))
+                            }
+                            None => {
+                                // println!("binding {} failed. not found in env {}", name, self.name_);
+                                Ok(None)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut bound: HashMap<String, FrozenValue> = HashMap::new();
+        {
+            let mut binder = EnvBinder {
+                bound: &mut bound,
+                env: &self.env,
+            };
+            for n in self.env.variables.keys() {
+                binder.get(n);
+            }
+        }
+
         Ok(FrozenEnvironment {
-            env: Arc::new(take),
+            env: Arc::new(EnvironmentContent {
+                name_: self.env.name_,
+                parent: self.env.parent.clone(),
+                variables: bound,
+            }),
+            global: self.global.clone(),
         })
     }
 
     /// Set the value of a variable in that environment.
     pub fn set(&mut self, name: &str, value: Value) -> Result<(), EnvironmentError> {
-        self.env.set(name, value)
+        self.env.variables.insert(name.to_string(), value);
+        Ok(())
     }
 
     pub fn import_symbol(
@@ -232,139 +343,41 @@ impl LocalEnvironment {
     }
 }
 
-impl Binder for EnvironmentContent {
-    fn get(&self, name: &str) -> Result<Option<Value>, ValueError> {
-        match EnvironmentContent::get(self, name).ok() {
-            Some(v) => match v.bind(self)? {
-                Some(b) => Ok(Some(b)),
-                None => Ok(Some(v)),
-            },
-            None => {
-                // println!("binding {} failed. not found in env {}", name, self.name_);
-                Ok(None)
-            }
-        }
-    }
-}
-
-impl EnvironmentContent {
+impl<ValueType> EnvironmentContent<ValueType>
+where
+    ValueType: Clone,
+    Value: From<ValueType>,
+{
     fn new(name: &str, parent: Option<FrozenEnvironment>) -> Self {
         Self {
             name_: name.to_owned(),
-            frozen: false,
             parent,
             variables: HashMap::new(),
-            type_objs: HashMap::new(),
         }
-    }
-
-    /// Freeze the environment, all its value will become immutable after that
-    pub fn freeze(&mut self) {
-        if self.frozen {
-            panic!("already frozen :/")
-        }
-
-        self.frozen = true;
-        for v in self.variables.values_mut() {
-            v.freeze();
-        }
-    }
-
-    pub fn bind(&mut self) -> Result<(), ValueError> {
-        if !self.frozen {
-            panic!("not yet frozen");
-        }
-
-        let mut changed: HashMap<String, Value> = HashMap::new();
-        for (k, v) in &self.variables {
-            match v.bind(self)? {
-                Some(n) => {
-                    changed.insert(k.to_string(), n);
-                }
-                None => {}
-            }
-        }
-        self.variables.extend(changed);
-
-        Ok(())
     }
 
     pub fn for_each_var<F: FnMut(&String, &Value)>(&self, mut func: F) {
         for v in self.vars() {
-            func(v.0, v.1);
+            let val: Value = v.1.clone().into();
+            func(v.0, &val);
         }
         if let Some(p) = self.get_parent() {
-            p.env().for_each_var(func);
+            p.env.for_each_var(func);
         }
     }
 
-    /// Set the value of a variable in that environment.
-    pub fn set(&mut self, name: &str, value: Value) -> Result<(), EnvironmentError> {
-        if self.frozen {
-            Err(EnvironmentError::TryingToMutateFrozenEnvironment)
-        } else {
-            self.variables.insert(name.to_string(), value);
-            Ok(())
-        }
-    }
-
-    pub fn vars(&self) -> impl Iterator<Item = (&String, &Value)> {
+    pub fn vars(&self) -> impl Iterator<Item = (&String, &ValueType)> {
         self.variables.iter()
     }
 
     /// Get the value of the variable `name`
     pub fn get(&self, name: &str) -> Result<Value, EnvironmentError> {
         match self.variables.get(name) {
-            Some(v) => Ok(v.clone()),
+            Some(v) => Ok(v.clone().into()),
             None => match self.parent {
-                Some(ref p) => p.env().get(name),
+                Some(ref p) => p.get(name),
                 None => Err(EnvironmentError::VariableNotFound(name.to_owned())),
             },
-        }
-    }
-
-    /// Get the object of type `obj_type`, and create it if none exists
-    pub fn add_type_value(&mut self, obj: &str, attr: &str, value: Value) {
-        if let Some(ref mut v) = self.type_objs.get_mut(obj) {
-            v.insert(attr.to_owned(), value);
-            // Do not use a else case for the borrow checker to realize that type_objs is no
-            // longer borrowed when inserting.
-            return;
-        }
-        let mut dict = HashMap::new();
-        dict.insert(attr.to_owned(), value);
-        self.type_objs.insert(obj.to_owned(), dict);
-    }
-
-    /// Get a type value if it exists (e.g. list.index).
-    fn get_type_value(&self, obj_type: &str, id: &str) -> Option<Value> {
-        match self.type_objs.get(obj_type) {
-            Some(ref d) => match d.get(id) {
-                Some(v) => Some(v.clone()),
-                None => match self.parent {
-                    Some(ref p) => p.env().get_type_value(obj_type, id),
-                    None => None,
-                },
-            },
-            None => match self.parent {
-                Some(ref p) => p.env().get_type_value(obj_type, id),
-                None => None,
-            },
-        }
-    }
-
-    /// List the attribute of a type
-    pub fn list_type_value(&self, obj: &Value) -> Vec<String> {
-        if let Some(ref d) = self.type_objs.get(obj.get_type()) {
-            let mut r = Vec::new();
-            for k in d.keys() {
-                r.push(k.clone());
-            }
-            r
-        } else if let Some(ref p) = self.parent {
-            p.env().list_type_value(obj)
-        } else {
-            Vec::new()
         }
     }
 
@@ -379,29 +392,36 @@ impl EnvironmentContent {
 /// Function implementations are only allowed to access
 /// type values from "type values" from the caller context,
 /// so this struct is passed instead of full `Environment`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TypeValues {
-    env: FrozenEnvironment,
+    type_objs: Arc<HashMap<String, HashMap<String, FrozenValue>>>,
 }
 
 impl TypeValues {
     /// Wrap environment.
-    pub fn new(env: FrozenEnvironment) -> TypeValues {
-        TypeValues { env }
+    pub fn new(type_objs: HashMap<String, HashMap<String, FrozenValue>>) -> TypeValues {
+        TypeValues {
+            type_objs: Arc::new(type_objs),
+        }
     }
 
-    /// Return the underlying `Environment` name.
-    pub fn name(&self) -> String {
-        self.env.name()
-    }
-
-    /// Get a type value if it exists (e.g. list.index).
     pub fn get_type_value(&self, obj_type: &str, id: &str) -> Option<Value> {
-        self.env.get_type_value(obj_type, id)
+        self.type_objs
+            .get(obj_type)
+            .and_then(|d| d.get(id))
+            .map(|v| v.clone().into())
     }
 
     /// List the attribute of a type
     pub fn list_type_value(&self, obj: &Value) -> Vec<String> {
-        self.env.list_type_value(obj)
+        if let Some(ref d) = self.type_objs.get(obj.get_type()) {
+            let mut r = Vec::new();
+            for k in d.keys() {
+                r.push(k.clone());
+            }
+            r
+        } else {
+            Vec::new()
+        }
     }
 }

@@ -25,20 +25,32 @@ pub enum NoneType {
     None,
 }
 
+impl TypedValueUtils for NoneType {
+    fn new_frozen(self) -> FrozenValue {
+        FrozenValue(FrozenInner::None(self))
+    }
+}
+
 /// Define the NoneType type
 impl TypedValue for NoneType {
-    type Holder = ImmutableCell<Self>;
-    const TYPE: &'static str = "NoneType";
-
-    fn new_value(self) -> Value {
-        Value(ValueInner::None(ValueHolder::new(self)))
+    fn get_type(&self) -> &'static str {
+        "NoneType"
     }
 
-    fn equals(&self, _other: &NoneType) -> Result<bool, ValueError> {
-        Ok(true)
+    fn equals(&self, other: &Value) -> Result<bool, ValueError> {
+        if let Some(_) = other.downcast_ref::<Self>() {
+            Ok(true)
+        } else {
+            Err(unsupported!(self, "==", Some(other)))
+        }
     }
-    fn compare(&self, _other: &NoneType) -> Result<Ordering, ValueError> {
-        Ok(Ordering::Equal)
+
+    fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
+        if let Some(_) = other.downcast_ref::<Self>() {
+            Ok(Ordering::Equal)
+        } else {
+            Err(unsupported!(self, "cmp()", Some(other)))
+        }
     }
 
     fn values_for_descendant_check_and_freeze<'a>(

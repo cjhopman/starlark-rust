@@ -38,6 +38,12 @@ impl<T: Into<Value>> From<Vec<T>> for Value {
     }
 }
 
+impl From<List> for Value {
+    fn from(a: List) -> Value {
+        MutableValue::make_mutable(a)
+    }
+}
+
 impl List {
     pub fn new() -> Value {
         Value::new(List {
@@ -106,9 +112,19 @@ impl CloneForCell for List {
     }
 }
 
-impl TypedValue for List {
-    type Holder = MutableCell<List>;
+impl MutableValue for List {}
 
+impl TypedValueUtils for List {
+    fn new_value(self) -> Value {
+        MutableValue::make_mutable(self)
+    }
+    fn new_frozen(self) -> FrozenValue {
+        FrozenValue(FrozenInner::Object(Arc::new(self)))
+    }
+    
+}
+
+impl TypedValue for List {
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {
@@ -156,49 +172,56 @@ impl TypedValue for List {
         )
     }
 
-    const TYPE: &'static str = "list";
-    fn to_bool(&self) -> bool {
+fn get_type(&self) -> &'static str { "list" }    fn to_bool(&self) -> bool {
         !self.content.is_empty()
     }
 
-    fn equals(&self, other: &List) -> Result<bool, ValueError> {
-        if self.content.len() != other.content.len() {
-            return Ok(false);
-        }
-
-        let mut self_iter = self.content.iter();
-        let mut other_iter = other.content.iter();
-
-        loop {
-            match (self_iter.next(), other_iter.next()) {
-                (Some(a), Some(b)) => {
-                    if !a.equals(b)? {
-                        return Ok(false);
-                    }
-                }
-                (None, None) => {
-                    return Ok(true);
-                }
-                _ => unreachable!(),
+    fn equals(&self, other: &Value) -> Result<bool, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            if self.content.len() != other.content.len() {
+                return Ok(false);
             }
+
+            let mut self_iter = self.content.iter();
+            let mut other_iter = other.content.iter();
+
+            loop {
+                match (self_iter.next(), other_iter.next()) {
+                    (Some(a), Some(b)) => {
+                        if !a.equals(b)? {
+                            return Ok(false);
+                        }
+                    }
+                    (None, None) => {
+                        return Ok(true);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        } else {
+            Err(unsupported!(self, "==", Some(other)))
         }
     }
 
-    fn compare(&self, other: &List) -> Result<Ordering, ValueError> {
-        let mut iter1 = self.content.iter();
-        let mut iter2 = other.content.iter();
-        loop {
-            match (iter1.next(), iter2.next()) {
-                (None, None) => return Ok(Ordering::Equal),
-                (None, Some(..)) => return Ok(Ordering::Less),
-                (Some(..), None) => return Ok(Ordering::Greater),
-                (Some(v1), Some(v2)) => {
-                    let r = v1.compare(&v2)?;
-                    if r != Ordering::Equal {
-                        return Ok(r);
+    fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            let mut iter1 = self.content.iter();
+            let mut iter2 = other.content.iter();
+            loop {
+                match (iter1.next(), iter2.next()) {
+                    (None, None) => return Ok(Ordering::Equal),
+                    (None, Some(..)) => return Ok(Ordering::Less),
+                    (Some(..), None) => return Ok(Ordering::Greater),
+                    (Some(v1), Some(v2)) => {
+                        let r = v1.compare(&v2)?;
+                        if r != Ordering::Equal {
+                            return Ok(r);
+                        }
                     }
                 }
             }
+        } else {
+            Err(unsupported!(self, "cmp()", Some(other)))
         }
     }
 
@@ -255,22 +278,30 @@ impl TypedValue for List {
     ///     == Value::from(vec![1, 2, 3, 2, 3])
     /// # );
     /// ```
-    fn add(&self, other: &List) -> Result<List, ValueError> {
-        let mut result = List {
-            content: Vec::new(),
-        };
-        for x in &self.content {
-            result.content.push(x.clone());
+    fn add(&self, other: &Value) -> Result<Value, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            let mut result = List {
+                content: Vec::new(),
+            };
+            for x in &self.content {
+                result.content.push(x.clone());
+            }
+            for x in &other.content {
+                result.content.push(x.clone());
+            }
+            Ok(Value::from(result))
+        } else {
+            Err(unsupported!(self, "+", Some(other)))
         }
-        for x in &other.content {
-            result.content.push(x.clone());
-        }
-        Ok(result)
     }
 
-    fn add_assign(&mut self, other: &List) -> Result<(), ValueError> {
-        self.content.extend(other.content.iter().cloned());
-        Ok(())
+    fn add_assign(&mut self, other: &Value) -> Result<(), ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            self.content.extend(other.content.iter().cloned());
+            Ok(())
+        } else {
+            Err(unsupported!(self, "+=", Some(other)))
+        }
     }
 
     /// Repeat `other` times this tuple.

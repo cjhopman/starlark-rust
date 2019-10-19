@@ -15,7 +15,7 @@
 //! `range()` builtin implementation
 
 use crate::values::iter::TypedIterable;
-use crate::values::{ImmutableCell, TypedValue, Value, ValueError};
+use crate::values::{ImmutableCell, TypedValue, TypedValueUtils, Value, ValueError};
 use std::num::NonZeroI64;
 use std::{iter, mem};
 
@@ -30,6 +30,27 @@ pub struct Range {
 impl Range {
     pub fn new(start: i64, stop: i64, step: NonZeroI64) -> Range {
         Range { start, stop, step }
+    }
+
+    fn equals_range(&self, other: &Range) -> Result<bool, ValueError> {
+        let self_length = self.length()?;
+        let other_length = other.length()?;
+        if self_length == 0 || other_length == 0 {
+            return Ok(self_length == other_length);
+        }
+        if self.start != other.start {
+            return Ok(false);
+        }
+        if self_length == 1 || other_length == 1 {
+            return Ok(self_length == other_length);
+        }
+        debug_assert!(self_length > 1);
+        debug_assert!(other_length > 1);
+        if self.step.get() == other.step.get() {
+            return Ok(self_length == other_length);
+        } else {
+            return Ok(false);
+        }
     }
 }
 
@@ -49,9 +70,12 @@ impl Iterator for RangeIterator {
     }
 }
 
-impl TypedValue for Range {
-    const TYPE: &'static str = "range";
+impl TypedValueUtils for Range {}
 
+impl TypedValue for Range {
+    fn get_type(&self) -> &'static str {
+        "range"
+    }
     fn collect_repr(&self, s: &mut String) {
         if self.step.get() != 1 {
             s.push_str(&format!(
@@ -106,24 +130,11 @@ impl TypedValue for Range {
         Ok(Value::new(self.start + self.step.get() * index))
     }
 
-    fn equals(&self, other: &Range) -> Result<bool, ValueError> {
-        let self_length = self.length()?;
-        let other_length = other.length()?;
-        if self_length == 0 || other_length == 0 {
-            return Ok(self_length == other_length);
-        }
-        if self.start != other.start {
-            return Ok(false);
-        }
-        if self_length == 1 || other_length == 1 {
-            return Ok(self_length == other_length);
-        }
-        debug_assert!(self_length > 1);
-        debug_assert!(other_length > 1);
-        if self.step.get() == other.step.get() {
-            return Ok(self_length == other_length);
+    fn equals(&self, other: &Value) -> Result<bool, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            self.equals_range(&*other)
         } else {
-            return Ok(false);
+            Err(unsupported!(self, "==", Some(other)))
         }
     }
 
@@ -197,8 +208,6 @@ impl TypedValue for Range {
         }
     }
 
-    type Holder = ImmutableCell<Range>;
-
     fn values_for_descendant_check_and_freeze(&self) -> Box<dyn Iterator<Item = Value>> {
         Box::new(iter::empty())
     }
@@ -207,7 +216,7 @@ impl TypedValue for Range {
 /// For tests
 impl PartialEq for Range {
     fn eq(&self, other: &Range) -> bool {
-        self.equals(other).unwrap()
+        self.equals_range(other).unwrap()
     }
 }
 

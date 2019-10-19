@@ -25,8 +25,7 @@ extern crate lazy_static;
 
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
-use starlark::environment::{Environment, FrozenEnvironment, LocalEnvironment};
-
+use starlark::environment::{Environment, FrozenEnvironment, GlobalEnvironment, GlobalEnvironmentBuilder, LocalEnvironment};
 
 use starlark::environment::TypeValues;
 use starlark::eval::interactive::{eval, eval_file, EvalError};
@@ -36,7 +35,7 @@ use starlark::stdlib::global_environment_with_extensions;
 use starlark::syntax::ast::AstStatement;
 use starlark::syntax::dialect::Dialect;
 use starlark::syntax::errors::SyntaxError;
-use starlark::syntax::parser::{parse,  parse_file};
+use starlark::syntax::parser::{parse, parse_file};
 use starlark::values::Value;
 use starlark_repl::{print_function, repl};
 use std::io::prelude::*;
@@ -137,7 +136,9 @@ fn provider_impl(
     let mut kwargs: SmallMap<::std::string::String, starlark::values::Value> =
         args.next_arg()?.into_kw_args_dict("kwargs")?;
     args.check_no_more_args()?;
-    Ok(Value::new(starlark::stdlib::structs::StarlarkStruct::new(kwargs)))
+    Ok(Value::new(starlark::stdlib::structs::StarlarkStruct::new(
+        kwargs,
+    )))
 }
 
 starlark_module! {global_functions =>
@@ -204,10 +205,10 @@ starlark_module! {global_functions =>
 }
 
 fn register_rule_def(
-    mut env: LocalEnvironment,
+    mut env: GlobalEnvironmentBuilder,
     recorder: std::rc::Rc<std::cell::RefCell<SmallMap<String, ValueMap>>>,
     name: &str,
-) -> LocalEnvironment {
+) -> GlobalEnvironmentBuilder {
     let mut signature = Vec::new();
     signature.push(starlark::values::function::FunctionParameter::KWArgsDict(
         "kwargs".to_owned(),
@@ -225,9 +226,9 @@ fn register_rule_def(
 }
 
 fn register_rule_exists(
-    mut env: LocalEnvironment,
+    mut env: GlobalEnvironmentBuilder,
     recorder: std::rc::Rc<std::cell::RefCell<SmallMap<String, ValueMap>>>,
-) -> LocalEnvironment {
+) -> GlobalEnvironmentBuilder {
     let mut signature = Vec::new();
     signature.push(starlark::values::function::FunctionParameter::Normal(
         "rule_name".to_owned(),
@@ -250,13 +251,13 @@ fn register_rule_exists(
 
 fn register_natives(mut env: LocalEnvironment) -> LocalEnvironment {
     let mut map = SmallMap::new();
-    env.env().for_each_var(|k, v| {
+    env.for_each_var(|k, v| {
         map.insert(k.clone().into(), v.clone());
     });
 
     env.set(
         "native",
-        Value::new(starlark::stdlib::structs::StarlarkStruct::new(map))
+        Value::new(starlark::stdlib::structs::StarlarkStruct::new(map)),
     )
     .unwrap();
     env
@@ -270,7 +271,7 @@ mod buck {
 
     pub struct SharedState {
         pub map: Arc<Mutex<HashMap<String, FrozenEnvironment>>>,
-        pub parent_env: FrozenEnvironment,
+        pub parent_env: GlobalEnvironment,
         pub codemap: Arc<Mutex<CodeMap>>,
         pub cells: Rc<HashMap<String, PathBuf>>,
     }
@@ -346,7 +347,7 @@ mod buck {
                     path.to_str().unwrap(),
                     Dialect::Bzl,
                     &mut env,
-                    TypeValues::new(self.info.shared.parent_env.clone()),
+                    self.info.shared.parent_env.get_type_values(),
                 )
                 .map_err(|e| EvalException::DiagnosedError(e))?;
 
@@ -395,7 +396,7 @@ mod buck {
             signature.push(
                 starlark::values::function::FunctionParameter::WithDefaultValue(
                     "$default".to_owned(),
-                    Value::new(NoneType::None),
+                    FrozenValue::new(NoneType::None),
                 ),
             );
             env.set(
@@ -464,9 +465,9 @@ mod buck {
             path: &str,
             build: Dialect,
             env: &mut LocalEnvironment,
-            file_loader_env: FrozenEnvironment,
+            file_loader_env: GlobalEnvironment,
         ) -> Result<Value, Diagnostic> {
-            self.super_eval_file(map, path, build, env, TypeValues::new(file_loader_env))
+            self.super_eval_file(map, path, build, env, file_loader_env.get_type_values())
         }
 
         pub fn eval_file(
@@ -474,7 +475,7 @@ mod buck {
             path: &str,
             dialect: Dialect,
             env: &mut LocalEnvironment,
-            file_loader_env: FrozenEnvironment,
+            file_loader_env: GlobalEnvironment,
         ) -> Result<Option<Value>, EvalError> {
             self.transform_result(
                 self.simple_eval_file(
@@ -572,7 +573,7 @@ fn main() {
     }
 
     let global = register_rule_exists(global, recorder.clone());
-    let global = global.frozen().unwrap();
+    let global = global.build();
 
     let dialect = if opt.build_file {
         Dialect::Build

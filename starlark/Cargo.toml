@@ -29,6 +29,7 @@ codemap = "0.1.1"
 codemap-diagnostic = "0.1.1"
 lalrpop-util = "0.16.0"
 indexmap = "1.2.0"
+smallbox = "0.7.5"
 
 [lib]
 bench = false

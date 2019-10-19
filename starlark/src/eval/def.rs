@@ -15,7 +15,7 @@
 //! Implementation of `def`.
 
 use crate::environment::{
-    Environment, LocalEnvironment, EnvironmentError, FrozenEnvironment, TypeValues, WeakFrozenEnvironment,
+    Environment, EnvironmentError, FrozenEnvironment, LocalEnvironment, TypeValues,
 };
 use crate::eval::call_stack::CallStack;
 use crate::eval::EvalResult;
@@ -28,7 +28,9 @@ use crate::values::dict::Dictionary;
 use crate::values::error::ValueError;
 use crate::values::function::*;
 use crate::values::none::NoneType;
-use crate::values::{function, mutability::ImmutableCell, Binder, TypedValue, Value, ValueResult};
+use crate::values::{
+    function, mutability::ImmutableCell, Binder, FrozenValue, TypedValue, TypedValueUtils, Value, ValueResult,
+};
 use codemap::{CodeMap, Spanned};
 use codemap_diagnostic::Diagnostic;
 use std::cell::RefCell;
@@ -194,6 +196,7 @@ impl DefCompiled {
 }
 
 /// Starlark function internal representation and implementation of [`TypedValue`].
+#[derive(Clone)]
 pub(crate) struct Def {
     bound: bool,
     signature: Vec<FunctionParameter>,
@@ -220,11 +223,13 @@ impl Def {
         })
     }
 
-    pub fn capture_env(&self, vars : &dyn Binder) -> Result<HashMap<String, Value>, ValueError> {
-        let mut captured_env = HashMap::new();
+    pub fn capture_env(&self, vars: &mut dyn Binder) -> Result<HashMap<String, Value>, ValueError> {
+        let mut captured_env: HashMap<String, Value> = HashMap::new();
         for n in &self.stmt.non_local_names {
             match vars.get(n)? {
-                Some(v) => { captured_env.insert(n.clone(), v); },
+                Some(v) => {
+                    captured_env.insert(n.clone(), v.into());
+                }
                 None => {
                     // TODO
                     /*
@@ -244,10 +249,18 @@ impl Def {
     }
 }
 
-impl TypedValue for Def {
-    type Holder = ImmutableCell<Def>;
+impl From<Def> for Value {
+    fn from(def: Def) -> Value {
+        Value::make_immutable(def)
+    }
+}
 
-    const TYPE: &'static str = "function";
+impl TypedValueUtils for Def {}
+
+impl TypedValue for Def {
+    fn get_type(&self) -> &'static str {
+        "function"
+    }
 
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
@@ -272,15 +285,15 @@ impl TypedValue for Def {
         )))
     }
 
-    fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError> {
+    fn bind(&self, vars: &mut dyn Binder) -> Result<FrozenValue, ValueError> {
         if self.bound {
-            return Ok(None);
+            panic!()
         }
 
         // println!("binding {}", self.stmt.name.node);
         if self.stmt.non_local_names.is_empty() {
             // println!("nothing to bind");
-            return Ok(None);
+            return Ok(FrozenValue::new(self.clone()));
         }
 
         let captured_env = self.capture_env(vars)?;
@@ -288,14 +301,14 @@ impl TypedValue for Def {
         // println!("non-local names: {:?}", self.stmt.non_local_names);
         // println!("bound names: {:?}", captured_env.keys());
 
-        Ok(Some(Value::new(Def {
+        Ok(FrozenValue::new(Def {
             bound: true,
             function_type: self.function_type.clone(),
             signature: self.signature.clone(),
             stmt: self.stmt.clone(),
             captured_env: Some(captured_env),
             map: self.map.clone(),
-        })))
+        }))
     }
 }
 
@@ -369,7 +382,7 @@ impl<'a> IndexedParams<'a> {
                 assert!(name == slot_name);
                 let v = self
                     .get_normal(slot, name, slots)
-                    .or_else(|| Some(default.clone()));
+                    .or_else(|| Some(default.clone().into()));
                 slots[slot] = v.clone();
                 v
             }
@@ -612,17 +625,18 @@ impl<'a> DefInvoker<'a> {
             }
 
             impl<'a> Binder for LocalBinder<'a> {
-                fn get(&self, name: &str) -> Result<Option<Value>, ValueError> {
+                fn get(&mut self, name: &str) -> Result<Option<Value>, ValueError> {
                     match self.context.get(name) {
                         Ok(v) => Ok(Some(v)),
                         _ => Ok(None),
                     }
                 }
             }
-            local_capture = self.def.capture_env(&LocalBinder{context: module_env})?;
+            local_capture = self.def.capture_env(&mut LocalBinder {
+                context: module_env,
+            })?;
             captured_env = &local_capture;
         }
-
 
         let mut ctx = EvaluationContext {
             call_stack: context.call_stack().to_owned(),

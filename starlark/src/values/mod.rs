@@ -83,9 +83,9 @@
 //! ```
 use crate::environment::TypeValues;
 
+use crate::environment::LocalEnvironment;
 use crate::eval::call_stack;
 use crate::eval::call_stack::CallStack;
-use crate::environment::LocalEnvironment;
 use crate::values::error::ValueError;
 use crate::values::function::FunctionInvoker;
 use crate::values::iter::{FakeTypedIterable, RefIterable, TypedIterable};
@@ -99,6 +99,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::marker;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub use crate::eval::EvalResult;
 pub use mutability::CloneForCell;
@@ -107,45 +108,133 @@ pub use mutability::MutableCell;
 
 pub use crate::small_map::SmallMap;
 
-/// ValueInner wraps the actual value or a memory pointer
-/// to the actual value for complex type.
-#[derive(Clone)]
-enum ValueInner {
-    None(ValueHolder<NoneType>),
-    Bool(ValueHolder<bool>),
-    Int(ValueHolder<i64>),
-    Other(Rc<dyn ValueHolderDyn>),
+enum MutableHolder<T: TypedValue> {
+    Shared(Arc<T>),
+    Mutable(T),
 }
 
+trait Mutable {}
+
+impl<T: TypedValue> Mutable for MutableHolder<T> {}
+
+/// ValueInner wraps the actual value or a memory pointer
+/// to the actual value for complex type.
+
+#[derive(Clone)]
+enum FrozenInner {
+    None(NoneType),
+    Bool(bool),
+    Int(i64),
+    Object(Arc<dyn TypedValue>),
+}
+
+#[derive(Clone)]
+enum LocalInner {
+    Immutable(FrozenValue),
+    Mutable(Rc<RefCell<dyn Mutable>>),
+}
+
+#[derive(Clone)]
+pub struct FrozenValue(FrozenInner);
+
+impl FrozenValue {
+    pub fn new<T: TypedValueUtils>(v: T) -> FrozenValue {
+        T::new_frozen(v)
+    }
+
+    pub fn val_ref(&self) -> &dyn TypedValue {
+        match &self.0 {
+            FrozenInner::None(v) => v,
+            FrozenInner::Bool(b) => b,
+            FrozenInner::Int(i) => i,
+            FrozenInner::Object(o) => &**o,
+        }              
+    }
+}
+
+unsafe impl Send for FrozenValue {}
+unsafe impl Sync for FrozenValue {}
+
 pub trait Binder {
-    fn get(&self, name: &str) -> Result<Option<Value>, ValueError>;
+    fn get(&mut self, name: &str) -> Result<Option<Value>, ValueError>;
+}
+
+pub struct ThrowingBinder {
+}
+
+impl Binder for ThrowingBinder {
+    fn get(&mut self, name: &str) -> Result<Option<Value>, ValueError> {
+        panic!()
+    }
 }
 
 /// A value in Starlark.
 ///
 /// This is a wrapper around a [TypedValue] which is cheap to clone and safe to pass around.
 #[derive(Clone)]
-pub struct Value(ValueInner);
+pub struct Value(LocalInner);
+
+impl From<FrozenValue> for Value {
+    fn from(frozen: FrozenValue) -> Self {
+        Self(LocalInner::Immutable(frozen))
+    }
+}
+
+pub type LocalValue = Value;
 
 pub type ValueResult = Result<Value, ValueError>;
 
 impl Value {
+    pub fn as_frozen(&self) -> FrozenValue {
+        match &self.0 {
+            LocalInner::Immutable(frozen) => frozen.clone(),
+            LocalInner::Mutable(mutable) => panic!("not frozen"),
+        }
+    }
     /// Create a new `Value` from a static value.
-    pub fn new<T: TypedValue>(t: T) -> Value {
+    pub fn new<T: TypedValueUtils>(t: T) -> Value {
         t.new_value()
     }
 
-    pub fn shared(&self) -> Value {
-        self.value_holder().shared().unwrap_or_else(|| self.clone())
+    pub fn from_frozen(v: FrozenValue) -> Value {
+        v.into()
     }
 
-    fn value_holder(&self) -> &(dyn ValueHolderDyn + 'static) {
+    pub fn make_bool(v: bool) -> Value {
+        FrozenValue(FrozenInner::Bool(v)).into()
+    }
+
+    pub fn make_int(i: i64) -> Value {
+        FrozenValue(FrozenInner::Int(i)).into()
+    }
+
+    pub fn make_none() -> Value {
+        FrozenValue(FrozenInner::None(NoneType::None)).into()
+    }
+
+    pub fn make_immutable<T: TypedValue>(val: T) -> Value {
+        FrozenValue(FrozenInner::Object(Arc::new(val))).into()
+    }
+
+    pub fn shared(&self) -> Value {
+        unimplemented!()
+        // self.val_ref().shared().unwrap_or_else(|| self.clone())
+    }
+
+    fn val_mut(&mut self) -> Result<&mut dyn TypedValue, ValueError> {
+        unimplemented!()
+    }
+
+    pub fn val_ref(&self) -> &(dyn TypedValue + 'static) {
+        unimplemented!()
+        /*
         match &self.0 {
             ValueInner::None(n) => n,
             ValueInner::Int(i) => i,
             ValueInner::Bool(b) => b,
             ValueInner::Other(rc) => &**rc,
         }
+        */
     }
 
     /// Clone for inserting into the other container, using weak reference if we do a
@@ -168,37 +257,19 @@ impl Value {
 
     /// Determine if the value pointed by other is a descendant of self
     pub fn is_descendant_value(&self, other: &Value) -> bool {
-        self.value_holder().is_descendant(other.data_ptr())
+        false
+        // self.val_ref().is_descendant(other.data_ptr())
     }
 
     /// Object data pointer.
     pub fn data_ptr(&self) -> DataPtr {
-        self.value_holder().data_ptr()
+        unimplemented!()
+        // self.val_ref().data_ptr()
     }
 
     /// Function id used to detect recursion.
     pub fn function_id(&self) -> FunctionId {
-        self.value_holder().function_id()
-    }
-}
-
-struct ValueHolder<T: TypedValue> {
-    content: <T as TypedValue>::Holder,
-}
-
-impl<T: TypedValue> ValueHolder<T> {
-    fn new(value: T) -> ValueHolder<T> {
-        ValueHolder {
-            content: <T as TypedValue>::Holder::new(value),
-        }
-    }
-}
-
-impl<T: TypedValue<Holder = ImmutableCell<T>> + Clone> Clone for ValueHolder<T> {
-    fn clone(&self) -> Self {
-        ValueHolder {
-            content: self.content.clone(),
-        }
+        self.val_ref().function_id().unwrap()
     }
 }
 
@@ -234,55 +305,22 @@ impl PartialEq for DataPtr {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionId(pub DataPtr);
 
-impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
-    fn shared(&self) -> Option<Value> {
-        if T::Holder::MUTABLE {
-            let rc: Rc<dyn ValueHolderDyn> = Rc::new(ValueHolder::<T> {
-                content: self.content.shared(),
-            });
-            // println!("make_shared {}", self.to_repr());
-            Some(Value(ValueInner::Other(rc)))
-        } else {
-            None
-        }
-    }
-
-    fn as_any_mut(&self) -> Result<Option<RefMut<'_, dyn Any>>, ValueError> {
-        self.content.test_mut()?;
-        Ok(if T::Holder::MUTABLE {
-            Some(RefMut::map(self.content.borrow_mut(), |v| {
-                v as &mut dyn Any
-            }))
-        } else {
-            None
-        })
-    }
-
-    fn as_any_ref(&self) -> RefOrRef<'_, dyn Any> {
-        RefOrRef::map(self.content.borrow(), |v| v as &dyn Any)
-    }
-
-    fn data_ptr(&self) -> DataPtr {
-        DataPtr::from(self.content.as_ptr())
-    }
-
+/*
+impl<T: TypedValue> TypedValueDyn for T {
     fn function_id(&self) -> FunctionId {
-        self.content
-            .borrow()
+        (self as T)
             .function_id()
             .unwrap_or(FunctionId(self.data_ptr()))
     }
 
-    fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError> {
-        self.content.borrow().bind(vars)
+    fn bind(&self, vars: &dyn Binder) -> Result<FrozenValue, ValueError> {
+        (self as T).bind(vars)
     }
 
     /// Freezes the current value.
     fn freeze(&self) {
-        self.content.freeze();
-        for mut value in self
-            .content
-            .borrow()
+        (self as T).freeze();
+        for mut value in (self as T)
             .values_for_descendant_check_and_freeze()
         {
             value.freeze();
@@ -291,28 +329,28 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
 
     /// Freezes the current value for iterating over.
     fn freeze_for_iteration(&self) {
-        self.content.freeze_for_iteration();
+        (self as T).freeze_for_iteration();
     }
 
     /// Unfreezes the current value for iterating over.
     fn unfreeze_for_iteration(&self) {
-        self.content.unfreeze_for_iteration();
+        (self as T).unfreeze_for_iteration();
     }
 
     fn collect_str(&self, s: &mut String) {
-        self.content.borrow().collect_str(s);
+        (self as T).collect_str(s);
     }
 
     fn collect_repr(&self, s: &mut String) {
-        self.content.borrow().collect_repr(s);
+        (self as T).collect_repr(s);
     }
 
     fn to_json(&self) -> String {
-        self.content.borrow().to_json()
+        (self as T).to_json()
     }
 
     fn find_in<'a>(&'_ self, map: &'a SmallMap<String, Value>) -> Option<&'a Value> {
-        self.content.borrow().find_in(map)
+        (self as T).find_in(map)
     }
 
     fn get_type(&self) -> &'static str {
@@ -320,21 +358,22 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
     }
 
     fn to_bool(&self) -> bool {
-        self.content.borrow().to_bool()
+        (self as T).to_bool()
     }
 
     fn to_int(&self) -> Result<i64, ValueError> {
-        self.content.borrow().to_int()
+        (self as T).to_int()
     }
 
     fn get_hash(&self) -> Result<u64, ValueError> {
-        self.content.borrow().get_hash()
+        (self as T).get_hash()
     }
 
     fn is_descendant(&self, other: DataPtr) -> bool {
         if self.data_ptr() == other {
             return true;
         }
+        false /*
         if let Ok(borrow) = self.content.try_borrow() {
             borrow
                 .values_for_descendant_check_and_freeze()
@@ -344,13 +383,14 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
             // which means we are trying to mutate it, assigning other to it.
             true
         }
+        */
     }
 
     fn equals(&self, other: &Value) -> Result<bool, ValueError> {
         let _stack_depth_guard = call_stack::try_inc()?;
 
         match other.downcast_ref::<T>() {
-            Some(other) => self.content.borrow().equals(&*other),
+            Some(other) => (self as T).equals(&*other),
             None => Ok(false),
         }
     }
@@ -507,7 +547,7 @@ impl<T: TypedValue> ValueHolderDyn for ValueHolder<T> {
 
 /// `ValueHolder` as virtual functions to put into `Value`.
 /// Should not be used or implemented directly.
-trait ValueHolderDyn {
+trait TypedValueDyn : Send + Sync {
     fn shared(&self) -> Option<Value>;
     /// This function panics is value is borrowed,
     /// `None` is returned for immutable types,
@@ -525,7 +565,7 @@ trait ValueHolderDyn {
 
     fn freeze(&self);
 
-    fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError>;
+    fn bind(&self, vars: &dyn Binder) -> Result<FrozenValue, ValueError>;
 
     fn freeze_for_iteration(&self);
 
@@ -598,22 +638,42 @@ trait ValueHolderDyn {
 
     fn pipe(&self, other: Value) -> ValueResult;
 }
+*/
+
+pub trait MutableValue: TypedValue + Sized {
+    fn make_mutable(self) -> Value {
+        let holder = MutableHolder::Mutable(self);
+        Value(LocalInner::Mutable(Rc::new(RefCell::new(holder))))
+    }
+}
+
+macro_rules! unsupported {
+    ($v:expr, $op:expr, $o:expr) => {
+        ValueError::OperationNotSupported {
+            op: $op.to_owned(),
+            left: $v.get_type().to_owned(),
+            // TODO
+            right: None,
+        }
+    };
+}
+
+pub trait TypedValueUtils : Sized + TypedValue {
+    fn new_value(self) -> Value {
+        Self::new_frozen(self).into()
+    }
+
+    fn new_frozen(self) -> FrozenValue {
+        // TODO: ensure bound
+        FrozenValue(FrozenInner::Object(Arc::new(self)))
+    }
+}
 
 /// A trait for a value with a type that all variable container
 /// will implement.
-pub trait TypedValue: Sized + 'static {
-    type Holder: ContentCell<Content = Self>;
-
+pub trait TypedValue : 'static {
     /// Return a string describing the type of self, as returned by the type() function.
-    const TYPE: &'static str;
-
-    /// Create a value for `TypedValue`.
-    ///
-    /// This function should be overridden only by builtin types.
-    #[doc(hidden)]
-    fn new_value(self) -> Value {
-        Value(ValueInner::Other(Rc::new(ValueHolder::new(self))))
-    }
+    fn get_type(&self) -> &'static str;
 
     /// Return a list of values to be used in freeze or descendant check operations.
     ///
@@ -638,8 +698,8 @@ pub trait TypedValue: Sized + 'static {
     fn values_for_descendant_check_and_freeze<'a>(&'a self)
         -> Box<dyn Iterator<Item = Value> + 'a>;
 
-    fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError> {
-        Ok(None)
+    fn bind(&self, vars: &mut dyn Binder) -> Result<FrozenValue, ValueError> {
+        unimplemented!()
     }
 
     /// Return function id to detect recursion.
@@ -669,16 +729,16 @@ pub trait TypedValue: Sized + 'static {
     /// Return a string representation of self, as returned by the repr() function.
     fn collect_repr(&self, collector: &mut String) {
         collector.push('<');
-        collector.push_str(&Self::TYPE);
+        collector.push_str(self.get_type());
         collector.push('>');
     }
 
     fn to_json(&self) -> String {
-        panic!("unsupported for type {}", Self::TYPE)
+        panic!("unsupported for type {}", self.get_type())
     }
 
     fn find_in<'a>(&'_ self, map: &'a SmallMap<String, Value>) -> Option<&'a Value> {
-        panic!("unsupported as key for type {}", Self::TYPE)
+        panic!("unsupported as key for type {}", self.get_type())
     }
 
     /// Convert self to a Boolean truth value, as returned by the bool() function.
@@ -691,11 +751,7 @@ pub trait TypedValue: Sized + 'static {
     /// Convert self to a integer value, as returned by the int() function if the type is numeric
     /// (not for string).
     fn to_int(&self) -> Result<i64, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "int()".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: None,
-        })
+        Err(unsupported!(self, "int()", None))
     }
 
     /// Return a hash code for self, as returned by the hash() function, or
@@ -713,10 +769,13 @@ pub trait TypedValue: Sized + 'static {
     /// Note: `==` in Starlark should work for arbitary objects,
     /// so implementation should avoid returning errors except for
     //  unrecoverable runtime errors.
-    fn equals(&self, other: &Self) -> Result<bool, ValueError> {
+    fn equals(&self, other: &Value) -> Result<bool, ValueError> {
+        unimplemented!()
+        /*
         let self_ptr = self as *const Self as *const ();
         let other_ptr = other as *const Self as *const ();
         Ok(self_ptr == other_ptr)
+        */
     }
 
     /// Compare `self` with `other`.
@@ -729,12 +788,8 @@ pub trait TypedValue: Sized + 'static {
     ///
     /// __Note__: This does not use the [`PartialOrd`] trait as
     ///       the trait needs to know the actual type of the value we compare.
-    fn compare(&self, _other: &Self) -> Result<Ordering, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "compare".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(Self::TYPE.to_owned()),
-        })
+    fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
+        Err(unsupported!(self, "compare", Some(other)))
     }
 
     /// Perform a call on the object, only meaningfull for function object.
@@ -752,22 +807,14 @@ pub trait TypedValue: Sized + 'static {
     /// * args: if provided, the `*args` argument.
     /// * kwargs: if provided, the `**kwargs` argument.
     fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "call()".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: None,
-        })
+        Err(unsupported!(self, "call()", None))
     }
 
     /// Perform an array or dictionary indirection.
     ///
     /// This returns the result of `a[index]` if `a` is indexable.
     fn at(&self, index: Value) -> ValueResult {
-        Err(ValueError::OperationNotSupported {
-            op: "[]".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(index.get_type().to_owned()),
-        })
+        Err(unsupported!(self, "[]", Some(index)))
     }
 
     /// Set the value at `index` with `new_value`.
@@ -776,11 +823,7 @@ pub trait TypedValue: Sized + 'static {
     /// frozen (but with `ValueError::OperationNotSupported` if the operation is not supported
     /// on this value, even if the value is immutable, e.g. for numbers).
     fn set_at(&mut self, index: Value, _new_value: Value) -> Result<(), ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "[] =".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(index.get_type().to_owned()),
-        })
+        Err(unsupported!(self, "[]=", Some(index)))
     }
 
     /// Extract a slice of the underlying object if the object is indexable. The result will be
@@ -830,29 +873,18 @@ pub trait TypedValue: Sized + 'static {
         _stop: Option<Value>,
         _stride: Option<Value>,
     ) -> ValueResult {
-        Err(ValueError::OperationNotSupported {
-            op: "[::]".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: None,
-        })
+        Err(unsupported!(self, "[::]", None))
     }
 
     /// Returns an iterable over the value of this container if this value hold an iterable
     /// container.
     fn iter(&self) -> Result<&dyn TypedIterable, ValueError> {
-        Err(ValueError::TypeNotX {
-            object_type: Self::TYPE.to_owned(),
-            op: "iterable".to_owned(),
-        })
+        Err(unsupported!(self, "(iter)", None))
     }
 
     /// Returns the length of the value, if this value is a sequence.
     fn length(&self) -> Result<i64, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "len()".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: None,
-        })
+        Err(unsupported!(self, "len()", None))
     }
 
     /// Get an attribute for the current value as would be returned by dotted expression (i.e.
@@ -860,22 +892,14 @@ pub trait TypedValue: Sized + 'static {
     ///
     /// __Note__: this does not handle native methods which are handled through universe.
     fn get_attr(&self, attribute: &str) -> ValueResult {
-        Err(ValueError::OperationNotSupported {
-            op: format!(".{}", attribute),
-            left: Self::TYPE.to_owned(),
-            right: None,
-        })
+        Err(unsupported!(self, ".{}", None))
     }
 
     /// Return true if an attribute of name `attribute` exists for the current value.
     ///
     /// __Note__: this does not handle native methods which are handled through universe.
     fn has_attr(&self, _attribute: &str) -> Result<bool, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "has_attr()".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: None,
-        })
+        Err(unsupported!(self, "has_attr()", None))
     }
 
     /// Set the attribute named `attribute` of the current value to `new_value` (e.g.
@@ -886,21 +910,13 @@ pub trait TypedValue: Sized + 'static {
     /// if the operation is not supported on this value, even if the self is immutable,
     /// e.g. for numbers).
     fn set_attr(&mut self, attribute: &str, _new_value: Value) -> Result<(), ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: format!(".{} =", attribute),
-            left: Self::TYPE.to_owned(),
-            right: None,
-        })
+        Err(unsupported!(self, ".{}=", None))
     }
 
     /// Return a vector of string listing all attribute of the current value, excluding native
     /// methods.
     fn dir_attr(&self) -> Result<Vec<String>, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "dir()".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: None,
-        })
+        Err(unsupported!(self, "dir()", None))
     }
 
     /// Tell wether `other` is in the current value, if it is a container.
@@ -920,11 +936,7 @@ pub trait TypedValue: Sized + 'static {
     /// assert!(!Value::from("abc").is_in(&Value::from("z")).unwrap().to_bool());
     /// ```
     fn is_in(&self, other: &Value) -> Result<bool, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "in".to_owned(),
-            left: other.get_type().to_owned(),
-            right: Some(Self::TYPE.to_owned()),
-        })
+        Err(unsupported!(other, "in", Some(self)))
     }
 
     /// Apply the `+` unary operator to the current value.
@@ -938,12 +950,8 @@ pub trait TypedValue: Sized + 'static {
     /// assert_eq!(1, int_op!(1.plus()));  // 1.plus() = +1 = 1
     /// # }
     /// ```
-    fn plus(&self) -> Result<Self, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "+".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: None,
-        })
+    fn plus(&self) -> Result<Value, ValueError> {
+        Err(unsupported!(self, "+", None))
     }
 
     /// Apply the `-` unary operator to the current value.
@@ -957,12 +965,8 @@ pub trait TypedValue: Sized + 'static {
     /// assert_eq!(-1, int_op!(1.minus()));  // 1.minus() = -1
     /// # }
     /// ```
-    fn minus(&self) -> Result<Self, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "-".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: None,
-        })
+    fn minus(&self) -> Result<Value, ValueError> {
+        Err(unsupported!(self, "-", None))
     }
 
     /// Add `other` to the current value.
@@ -976,27 +980,12 @@ pub trait TypedValue: Sized + 'static {
     /// assert_eq!(3, int_op!(1.add(2)));  // 1.add(2) = 1 + 2 = 3
     /// # }
     /// ```
-    fn add(&self, _other: &Self) -> Result<Self, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "+".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(Self::TYPE.to_owned()),
-        })
+    fn add(&self, other: &Value) -> Result<Value, ValueError> {
+        Err(unsupported!(self, "+", Some(other)))
     }
 
-    fn add_special(&self, other: Value) -> Result<Value, ValueError> {
-        match other.downcast_ref::<Self>() {
-            Some(other) => self.add(&*other).map(Value::new),
-            None => Err(ValueError::IncorrectParameterType),
-        }
-    }
-
-    fn add_assign(&mut self, _other: &Self) -> Result<(), ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "+=".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(Self::TYPE.to_owned()),
-        })
+    fn add_assign(&mut self, other: &Value) -> Result<(), ValueError> {
+        Err(unsupported!(self, "+=", Some(other)))
     }
 
     /// Substract `other` from the current value.
@@ -1010,12 +999,8 @@ pub trait TypedValue: Sized + 'static {
     /// assert_eq!(-1, int_op!(1.sub(2)));  // 1.sub(2) = 1 - 2 = -1
     /// # }
     /// ```
-    fn sub(&self, _other: &Self) -> Result<Self, ValueError> {
-        Err(ValueError::OperationNotSupported {
-            op: "-".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(Self::TYPE.to_owned()),
-        })
+    fn sub(&self, other: &Value) -> Result<Value, ValueError> {
+        Err(unsupported!(self, "-", Some(other)))
     }
 
     /// Multiply the current value with `other`.
@@ -1030,11 +1015,7 @@ pub trait TypedValue: Sized + 'static {
     /// # }
     /// ```
     fn mul(&self, other: Value) -> ValueResult {
-        Err(ValueError::OperationNotSupported {
-            op: "*".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(other.get_type().to_owned()),
-        })
+        Err(unsupported!(self, "*", Some(other)))
     }
 
     /// Apply the percent operator between the current value and `other`.
@@ -1053,11 +1034,7 @@ pub trait TypedValue: Sized + 'static {
     /// # }
     /// ```
     fn percent(&self, other: Value) -> ValueResult {
-        Err(ValueError::OperationNotSupported {
-            op: "%".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(other.get_type().to_owned()),
-        })
+        Err(unsupported!(self, "%", Some(other)))
     }
 
     /// Divide the current value with `other`.  division.
@@ -1072,11 +1049,7 @@ pub trait TypedValue: Sized + 'static {
     /// # }
     /// ```
     fn div(&self, other: Value) -> ValueResult {
-        Err(ValueError::OperationNotSupported {
-            op: "/".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(other.get_type().to_owned()),
-        })
+        Err(unsupported!(self, "/", Some(other)))
     }
 
     /// Floor division between the current value and `other`.
@@ -1091,22 +1064,14 @@ pub trait TypedValue: Sized + 'static {
     /// # }
     /// ```
     fn floor_div(&self, other: Value) -> ValueResult {
-        Err(ValueError::OperationNotSupported {
-            op: "//".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(other.get_type().to_owned()),
-        })
+        Err(unsupported!(self, "//", Some(other)))
     }
 
     /// Apply the operator pipe to the current value and `other`.
     ///
     /// This is usually the union on set.
     fn pipe(&self, other: Value) -> ValueResult {
-        Err(ValueError::OperationNotSupported {
-            op: "|".to_owned(),
-            left: Self::TYPE.to_owned(),
-            right: Some(other.get_type().to_owned()),
-        })
+       Err(unsupported!(self, "|", Some(other)))
     }
 }
 
@@ -1116,21 +1081,28 @@ impl fmt::Debug for Value {
     }
 }
 
+impl fmt::Debug for FrozenValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let val : Value = self.clone().into();
+        write!(f, "FrozenValue[{}]({})", val.get_type(), val.to_repr())
+    }
+}
+
 impl Value {
     pub fn freeze(&mut self) {
-        self.value_holder().freeze()
+        unimplemented!()
     }
-    pub fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError> {
-        self.value_holder().bind(vars)
+    pub fn bind(&self, vars: &mut dyn Binder) -> Result<FrozenValue, ValueError> {
+        unimplemented!()
     }
     pub fn freeze_for_iteration(&mut self) {
-        self.value_holder().freeze_for_iteration()
+        unimplemented!()
     }
     pub fn unfreeze_for_iteration(&mut self) {
-        self.value_holder().unfreeze_for_iteration()
+        unimplemented!()
     }
     pub fn collect_str(&self, s: &mut String) {
-        self.value_holder().collect_str(s);
+        self.val_ref().collect_str(s);
     }
     pub fn to_str(&self) -> String {
         let mut s = String::new();
@@ -1138,7 +1110,7 @@ impl Value {
         s
     }
     pub fn collect_repr(&self, s: &mut String) {
-        self.value_holder().collect_repr(s);
+        self.val_ref().collect_repr(s);
     }
     pub fn to_repr(&self) -> String {
         let mut s = String::new();
@@ -1146,41 +1118,42 @@ impl Value {
         s
     }
     pub fn to_json(&self) -> String {
-        self.value_holder().to_json()
+        self.val_ref().to_json()
     }
     pub fn get_type(&self) -> &'static str {
-        self.value_holder().get_type()
+        self.val_ref().get_type()
     }
     pub fn to_bool(&self) -> bool {
-        self.value_holder().to_bool()
+        self.val_ref().to_bool()
     }
     pub fn to_int(&self) -> Result<i64, ValueError> {
-        self.value_holder().to_int()
+        self.val_ref().to_int()
     }
     pub fn get_hash(&self) -> Result<u64, ValueError> {
-        self.value_holder().get_hash()
+        self.val_ref().get_hash()
     }
     pub fn equals(&self, other: &Value) -> Result<bool, ValueError> {
-        self.value_holder().equals(other)
+        self.val_ref().equals(other)
     }
     pub fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
-        self.value_holder().compare(other)
+        self.val_ref().compare(other)
     }
 
     pub fn is_descendant(&self, other: DataPtr) -> bool {
-        self.value_holder().is_descendant(other)
+        unimplemented!()
+        // self.val_ref().is_descendant(other)
     }
 
     pub fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
-        self.value_holder().new_invoker()
+        self.val_ref().new_invoker()
     }
 
     pub fn at(&self, index: Value) -> ValueResult {
-        self.value_holder().at(index)
+        self.val_ref().at(index)
     }
 
     pub fn set_at(&mut self, index: Value, new_value: Value) -> Result<(), ValueError> {
-        self.value_holder().set_at(index, new_value)
+        self.val_mut()?.set_at(index, new_value)
     }
 
     pub fn slice(
@@ -1189,63 +1162,65 @@ impl Value {
         stop: Option<Value>,
         stride: Option<Value>,
     ) -> ValueResult {
-        self.value_holder().slice(start, stop, stride)
+        self.val_ref().slice(start, stop, stride)
     }
     pub fn iter<'a>(&'a self) -> Result<RefIterable<'a>, ValueError> {
-        self.value_holder().iter()
+        unimplemented!()
+        // self.val_ref().iter()
     }
     pub fn length(&self) -> Result<i64, ValueError> {
-        self.value_holder().length()
+        self.val_ref().length()
     }
     pub fn get_attr(&self, attribute: &str) -> ValueResult {
-        self.value_holder().get_attr(attribute)
+        self.val_ref().get_attr(attribute)
     }
     pub fn has_attr(&self, attribute: &str) -> Result<bool, ValueError> {
-        self.value_holder().has_attr(attribute)
+        self.val_ref().has_attr(attribute)
     }
     pub fn set_attr(&mut self, attribute: &str, new_value: Value) -> Result<(), ValueError> {
-        self.value_holder().set_attr(attribute, new_value)
+        self.val_mut()?.set_attr(attribute, new_value)
     }
     pub fn dir_attr(&self) -> Result<Vec<String>, ValueError> {
-        self.value_holder().dir_attr()
+        self.val_ref().dir_attr()
     }
     pub fn is_in(&self, other: &Value) -> Result<bool, ValueError> {
-        self.value_holder().is_in(other)
+        self.val_ref().is_in(other)
     }
     pub fn plus(&self) -> ValueResult {
-        self.value_holder().plus()
+        self.val_ref().plus()
     }
     pub fn minus(&self) -> ValueResult {
-        self.value_holder().minus()
+        self.val_ref().minus()
     }
     pub fn add(&self, other: Value) -> ValueResult {
-        self.value_holder().add(other)
+        self.val_ref().add(&other)
     }
     pub fn add_assign(&mut self, other: Value) -> Result<Option<Value>, ValueError> {
         match self.0 {
-            ValueInner::None(_) => panic!("can't += on None"),
-            ValueInner::Int(ref mut i) => i.add_assign(other),
-            ValueInner::Bool(ref mut b) => panic!("can't += on True/False"),
-            ValueInner::Other(ref mut rc) => rc.add_assign(other),
+            LocalInner::Immutable(..) => panic!("can't += on immutable"),
+            LocalInner::Mutable(ref mut v) => {
+                unimplemented!()
+                // (**v).borrow_mut().add_assign(&other),
+            }
         }
     }
     pub fn sub(&self, other: Value) -> ValueResult {
-        self.value_holder().sub(other)
+        self.val_ref().sub(&other)
     }
     pub fn mul(&self, other: Value) -> ValueResult {
-        self.value_holder().mul(other)
+        self.val_ref().mul(other)
     }
     pub fn percent(&self, other: Value) -> ValueResult {
-        self.value_holder().percent(other)
+        self.val_ref().percent(other)
     }
     pub fn div(&self, other: Value) -> ValueResult {
-        self.value_holder().div(other)
+        self.val_ref().div(other)
     }
     pub fn floor_div(&self, other: Value) -> ValueResult {
-        self.value_holder().floor_div(other)
+        self.val_ref().floor_div(other)
     }
     pub fn pipe(&self, other: Value) -> ValueResult {
-        self.value_holder().pipe(other)
+        self.val_ref().pipe(other)
     }
 }
 
@@ -1262,7 +1237,8 @@ impl PartialEq for Value {
 }
 impl Eq for Value {}
 
-impl dyn ValueHolderDyn {
+
+impl Value {
     // To be calleds by convert_slice_indices only
     fn convert_index_aux(
         len: i64,
@@ -1345,6 +1321,7 @@ impl dyn ValueHolderDyn {
     }
 }
 
+
 impl Value {
     /// Parse indices for slicing.
     ///
@@ -1390,9 +1367,9 @@ impl Value {
                 let def_end = if stride < 0 { -1 } else { len };
                 let clamp = if stride < 0 { -1 } else { 0 };
                 let start =
-                    ValueHolderDyn::convert_index_aux(len, start, def_start, clamp, len + clamp);
+                    Value::convert_index_aux(len, start, def_start, clamp, len + clamp);
                 let stop =
-                    ValueHolderDyn::convert_index_aux(len, stop, def_end, clamp, len + clamp);
+                    Value::convert_index_aux(len, stop, def_end, clamp, len + clamp);
                 match (start, stop) {
                     (Ok(s1), Ok(s2)) => Ok((s1, s2, stride)),
                     (Err(x), ..) => Err(x),
@@ -1404,13 +1381,20 @@ impl Value {
     }
 }
 
+
+pub fn to_frozen_for_defaults<T: Into<Value>>(t: T) -> FrozenValue {
+    let mut v : Value = t.into();
+    v.freeze();
+    v.bind(&mut ThrowingBinder{}).unwrap()
+}
+
 impl Value {
     /// Get a reference to underlying data or `None`
     /// if contained object has different type than requested.
     ///
     /// This function panics if the `Value` is borrowed mutably.
     pub fn downcast_ref<T: TypedValue>(&self) -> Option<RefOrRef<'_, T>> {
-        let any = self.value_holder().as_any_ref();
+        let any = self.as_any_ref();
         if any.is::<T>() {
             Some(RefOrRef::map(any, |any| any.downcast_ref().unwrap()))
         } else {
@@ -1418,16 +1402,26 @@ impl Value {
         }
     }
 
+    fn as_any_ref(&self) -> RefOrRef<'_, dyn Any> {
+        unimplemented!()
+    }
+
+    fn as_any_mut(&self) -> Result<Option<RefMut<'_, dyn Any>>, ValueError> {
+        unimplemented!()
+    }
+
+
+
     /// Get a mutable reference to underlying data or `None`
     /// if contained object has different type than requested.
     ///
     /// This function panics if the `Value` is borrowed.
     ///
     /// Error is returned if the value is frozen or frozen for iteration.
-    pub fn downcast_mut<T: CloneForCell + TypedValue<Holder = MutableCell<T>>>(
+    pub fn downcast_mut<T: CloneForCell + MutableValue>(
         &self,
     ) -> Result<Option<RefMut<'_, T>>, ValueError> {
-        let any = match self.value_holder().as_any_mut()? {
+        let any = match self.as_any_mut()? {
             Some(any) => any,
             None => return Ok(None),
         };
@@ -1436,10 +1430,6 @@ impl Value {
         } else {
             None
         })
-    }
-
-    pub fn convert_index(&self, len: i64) -> Result<i64, ValueError> {
-        self.value_holder().convert_index(len)
     }
 }
 
@@ -1499,6 +1489,7 @@ mod tests {
 
     #[test]
     fn can_implement_compare() {
+        /*
         #[derive(Debug, PartialEq, Eq, Ord, PartialOrd)]
         struct WrappedNumber(u64);
 
@@ -1507,18 +1498,18 @@ mod tests {
             fn collect_repr(&self, s: &mut String) {
                 s.push_str(&self.0.to_string());
             }
-            const TYPE: &'static str = "WrappedNumber";
+            fn get_type(&self) -> &'static str {
+                "wrappednum"
+            }
             fn to_bool(&self) -> bool {
                 false
             }
             fn get_hash(&self) -> Result<u64, ValueError> {
                 Ok(self.0)
             }
-            fn compare(&self, other: &WrappedNumber) -> Result<std::cmp::Ordering, ValueError> {
+            fn compare(&self, other: &Value) -> Result<std::cmp::Ordering, ValueError> {
                 Ok(std::cmp::Ord::cmp(self, other))
             }
-
-            type Holder = ImmutableCell<WrappedNumber>;
 
             fn values_for_descendant_check_and_freeze<'a>(
                 &'a self,
@@ -1537,6 +1528,7 @@ mod tests {
         assert_eq!(one.compare(&another_one), Ok(Equal));
         assert_eq!(one.compare(&two), Ok(Less));
         assert_eq!(two.compare(&one), Ok(Greater));
+        */
     }
 
     #[test]

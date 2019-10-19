@@ -21,7 +21,7 @@ use std::error::Error;
 use std::num::NonZeroI64;
 use std::sync;
 
-use crate::environment::{Environment, LocalEnvironment, TypeValues};
+use crate::environment::{Environment, LocalEnvironment, GlobalEnvironmentBuilder, TypeValues};
 use crate::eval::noload::eval;
 use crate::syntax::dialect::Dialect;
 use crate::values::dict::Dictionary;
@@ -433,7 +433,7 @@ starlark_module! {global_functions =>
     /// `int()` with no arguments returns 0.
     int(#a, ?base) {
         if a.get_type() == "string" {
-            let s = a.to_str();
+            let s : String = a.to_str();
             let base = match base {
                 Some(base) => base.to_int()?,
                 None => 0,
@@ -971,18 +971,18 @@ starlark_module! {global_functions =>
 ///
 /// For example `stdlib::global_environment().freeze().child("test")` create a child environment
 /// of this global environment that have been frozen.
-pub fn global_environment() -> LocalEnvironment {
-    let mut env = LocalEnvironment::new("global");
+pub fn global_environment() -> GlobalEnvironmentBuilder {
+    let mut env = GlobalEnvironmentBuilder::new();
     env.set("None", Value::new(NoneType::None)).unwrap();
     env.set("True", Value::new(true)).unwrap();
     env.set("False", Value::new(false)).unwrap();
-    dict::kwargs::global(dict::global(list::global(string::global(
+    dict::global(list::global(string::global(
         global_functions(env),
-    ))))
+    )))
 }
 
 /// Default global environment with added non-standard `struct` and `set` extensions.
-pub fn global_environment_with_extensions() -> LocalEnvironment {
+pub fn global_environment_with_extensions() -> GlobalEnvironmentBuilder {
     let env = global_environment();
     let env = structs::global(env);
     crate::linked_hash_set::global(env)
@@ -994,7 +994,7 @@ pub fn global_environment_with_extensions() -> LocalEnvironment {
 pub fn starlark_default(snippet: &str) -> Result<bool, Diagnostic> {
     let map = sync::Arc::new(sync::Mutex::new(CodeMap::new()));
     let env = global_environment_with_extensions();
-    let env = env.frozen().unwrap();
+    let env = env.build();
     let mut test_env = env.child("test");
     match eval(
         &map,
@@ -1002,7 +1002,7 @@ pub fn starlark_default(snippet: &str) -> Result<bool, Diagnostic> {
         snippet,
         Dialect::Bzl,
         &mut test_env,
-        TypeValues::new(env),
+        env.get_type_values(),
     ) {
         Ok(v) => Ok(v.to_bool()),
         Err(d) => {
@@ -1025,7 +1025,7 @@ pub mod tests {
 
     pub fn starlark_default_fail(snippet: &str) -> Result<bool, Diagnostic> {
         let map = sync::Arc::new(sync::Mutex::new(CodeMap::new()));
-        let global = global_environment().frozen().unwrap();
+        let global = global_environment().build();
         let mut env = global.child("test");
         match eval(
             &map,
@@ -1033,7 +1033,7 @@ pub mod tests {
             snippet,
             Dialect::Bzl,
             &mut env,
-            TypeValues::new(global),
+            global.get_type_values(),
         ) {
             Ok(v) => Ok(v.to_bool()),
             Err(d) => Err(d),

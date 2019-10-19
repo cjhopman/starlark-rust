@@ -31,7 +31,7 @@ use std::vec;
 pub enum FunctionParameter {
     Normal(String),
     Optional(String),
-    WithDefaultValue(String, Value),
+    WithDefaultValue(String, FrozenValue),
     ArgsArray(String),
     KWArgsDict(String),
 }
@@ -68,8 +68,8 @@ pub enum FunctionType {
 pub enum FunctionArg {
     Normal(Value),
     Optional(Option<Value>),
-    ArgsArray(ArgsArray),
-    KWArgsDict(KwargsDict),
+    ArgsArray(Vec<Value>),
+    KWArgsDict(SmallMap<String, Value>),
 }
 
 impl FunctionArg {
@@ -105,7 +105,11 @@ impl FunctionArg {
         param_name: &'static str,
     ) -> Result<Vec<T>, ValueError> {
         match self {
-            FunctionArg::ArgsArray(v) => v.into_args_array(),
+            FunctionArg::ArgsArray(v) => Ok(v
+                .into_iter()
+                .map(T::try_from)
+                .collect::<Result<Vec<T>, _>>()
+                .map_err(|_| ValueError::IncorrectParameterTypeNamed(param_name))?),
             _ => Err(ValueError::IncorrectParameterType),
         }
     }
@@ -115,7 +119,17 @@ impl FunctionArg {
         param_name: &'static str,
     ) -> Result<SmallMap<String, T>, ValueError> {
         match self {
-            FunctionArg::KWArgsDict(dict) => dict.into_hash_map(),
+            FunctionArg::KWArgsDict(dict) => Ok({
+                let mut r = SmallMap::new();
+                for (k, v) in dict {
+                    r.insert(
+                        k,
+                        T::try_from(v)
+                            .map_err(|_| ValueError::IncorrectParameterTypeNamed(param_name))?,
+                    );
+                }
+                r
+            }),
             _ => Err(ValueError::IncorrectParameterType),
         }
     }
@@ -138,9 +152,9 @@ impl From<FunctionArg> for Value {
     }
 }
 
-pub type StarlarkFunctionPrototype =
-    dyn Fn(&EvaluationContext, Vec<FunctionArg>) -> ValueResult;
+pub type StarlarkFunctionPrototype = dyn Fn(&EvaluationContext, Vec<FunctionArg>) -> ValueResult;
 // Wrapper for method that have been affected the self object
+#[derive(Clone)]
 pub(crate) struct WrappedMethod {
     method: Value,
     self_obj: Value,
@@ -262,7 +276,7 @@ pub(crate) fn collect_repr(
                 FunctionParameter::Normal(ref name) => name.clone(),
                 FunctionParameter::Optional(ref name) => format!("?{}", name),
                 FunctionParameter::WithDefaultValue(ref name, ref value) => {
-                    format!("{} = {}", name, value.to_repr())
+                    format!("{} = {}", name, Value::from_frozen(value.clone()).to_repr())
                 }
                 FunctionParameter::ArgsArray(ref name) => format!("*{}", name),
                 FunctionParameter::KWArgsDict(ref name) => format!("**{}", name),
@@ -284,7 +298,7 @@ pub(crate) fn collect_str(
                 FunctionParameter::Normal(ref name) => name.clone(),
                 FunctionParameter::Optional(ref name) => name.clone(),
                 FunctionParameter::WithDefaultValue(ref name, ref value) => {
-                    format!("{} = {}", name, value.to_repr())
+                    format!("{} = {}", name, Value::from_frozen(value.clone()).to_repr())
                 }
                 FunctionParameter::ArgsArray(ref name) => format!("*{}", name),
                 FunctionParameter::KWArgsDict(ref name) => format!("**{}", name),
@@ -292,545 +306,6 @@ pub(crate) fn collect_str(
         })
         .collect();
     collector.push_str(&format!("{}({})", function_type.to_str(), v.join(", ")));
-}
-
-#[derive(Debug)]
-pub struct ArgsArray {
-    index: usize,
-    args_len: i64,
-    positional: Vec<Value>,
-    args: Option<Value>,
-}
-
-impl ArgsArray {
-    pub fn new(positional: Vec<Value>, args: Option<Value>) -> Self {
-        Self {
-            index: 0,
-            args_len: args.as_ref().and_then(|e| e.length().ok()).unwrap_or(0),
-            positional,
-            args,
-        }
-    }
-    pub fn next(&mut self) -> Option<Value> {
-        let mut idx = self.index;
-        self.index += 1;
-        if idx < self.positional.len() {
-            return Some(self.positional[idx].clone());
-        }
-
-        idx -= self.positional.len();
-        if idx < self.args_len as usize {
-            if let Some(ref v) = self.args {
-                return v.at(Value::new(idx as i64)).ok();
-            }
-        }
-        None
-    }
-
-    pub fn into_args_array<T: TryParamConvertFromValue>(mut self) -> Result<Vec<T>, ValueError> {
-        let mut res = Vec::with_capacity(self.remaining());
-        let mut skip = 0;
-        if self.index < self.positional.len() {
-            for v in self.positional.into_iter().skip(self.index) {
-                res.push(T::try_from(v).map_err(|_| ValueError::IncorrectParameterTypeNamed(""))?);
-            }
-        } else {
-            skip = self.index - self.positional.len();
-        }
-
-        if let Some(ref args) = self.args.take() {
-            for k in args.iter() {
-                for v in k.into_iter().skip(skip) {
-                    res.push(
-                        T::try_from(v).map_err(|_| ValueError::IncorrectParameterTypeNamed(""))?,
-                    );
-                }
-            }
-        }
-
-        Ok(res)
-        /*
-        Ok(v
-                .into_iter()
-                .map(T::try_from)
-                .collect::<Result<Vec<T>, _>>()
-                .map_err()
-                */
-    }
-
-    pub fn remaining(&self) -> usize {
-        self.positional.len() + self.args_len as usize - self.index
-    }
-
-    fn make_list(&self) -> Vec<Value> {
-        let mut list = Vec::with_capacity(self.remaining());
-        if self.index < self.positional.len() {
-            for v in self.positional.iter().skip(self.index) {
-                list.push(v.clone());
-            }
-            if let Some(ref args) = self.args {
-                let inner = args.iter().unwrap();
-                for v in inner.into_iter() {
-                    list.push(v);
-                }
-            }
-        } else {
-            if let Some(ref args) = self.args {
-                let inner = args.iter().unwrap();
-                for v in inner.into_iter().skip(self.index - self.positional.len()) {
-                    list.push(v);
-                }
-            }
-        }
-        list
-    }
-
-    fn check_no_more_args(&self) -> Result<(), ValueError> {
-        Ok(())
-    }
-}
-
-impl TypedValue for ArgsArray {
-    type Holder = ImmutableCell<Self>;
-
-    /// Return a string describing the type of self, as returned by the type() function.
-    const TYPE: &'static str = "argsarray";
-
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        // TODO
-        Box::new(iter::empty())
-    }
-
-    /// Return a string representation of self, as returned by the repr() function.
-    fn collect_repr(&self, s: &mut String) {
-        s.push('<');
-        s.push_str(Self::TYPE);
-        s.push('>');
-    }
-
-    fn to_json(&self) -> String {
-        panic!("unsupported for type {}", Self::TYPE)
-    }
-
-    /// Convert self to a Boolean truth value, as returned by the bool() function.
-    fn to_bool(&self) -> bool {
-        // TODO
-        true
-    }
-
-    /// Perform an array or dictionary indirection.
-    ///
-    /// This returns the result of `a[index]` if `a` is indexable.
-    fn at(&self, index: Value) -> ValueResult {
-        let index = index.convert_index(self.remaining() as i64)?;
-        let mut idx = self.index + (index as usize);
-        if idx < self.positional.len() {
-            return Ok(self.positional[idx].clone());
-        }
-
-        idx -= self.positional.len();
-        if let Some(ref a) = self.args {
-            return a.at(Value::new(idx as i64));
-        }
-        unreachable!()
-    }
-
-    fn slice(
-        &self,
-        _start: Option<Value>,
-        _stop: Option<Value>,
-        _stride: Option<Value>,
-    ) -> ValueResult {
-        unimplemented!("could be done")
-    }
-
-    /// Returns an iterable over the value of this container if this value hold an iterable
-    /// container.
-    fn iter(&self) -> Result<&dyn TypedIterable, ValueError> {
-        Ok(self)
-    }
-
-    /// Returns the length of the value, if this value is a sequence.
-    fn length(&self) -> Result<i64, ValueError> {
-        unimplemented!("length")
-    }
-
-    fn is_in(&self, other: &Value) -> Result<bool, ValueError> {
-        unimplemented!("?")
-    }
-
-    fn add_special(&self, other: Value) -> Result<Value, ValueError> {
-        let mut list = self.make_list();
-        list.extend(other.iter().unwrap().into_iter());
-        Ok(Value::from(list))
-    }
-}
-
-impl TypedIterable for ArgsArray {
-    fn to_iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
-        if self.index < self.positional.len() {
-            let iter = self.positional.iter().skip(self.index).cloned();
-            if let Some(ref args) = self.args {
-                let inner = args.iter().unwrap();
-                let vec: Vec<_> = inner.into_iter().collect();
-                return Box::new(iter.chain(vec.into_iter()));
-            }
-            return Box::new(iter);
-        } else {
-            if let Some(ref args) = self.args {
-                let inner = args.iter().unwrap();
-                let vec: Vec<_> = inner
-                    .into_iter()
-                    .skip(self.index - self.positional.len())
-                    .collect();
-                return Box::new(vec.into_iter());
-            }
-        }
-        Box::new(std::iter::empty())
-    }
-}
-
-impl CloneForCell for ArgsArray {
-    fn clone_for_cell(&self) -> Self {
-        let list = self.make_list();
-        ArgsArray::new(Vec::new(), Some(Value::from(list)))
-    }
-}
-
-impl From<ArgsArray> for Value {
-    fn from(a: ArgsArray) -> Value {
-        let mut v = Value::new(a);
-        v.freeze();
-        v.shared()
-    }
-}
-
-#[derive(Debug)]
-pub struct KwargsData {}
-
-pub struct KwargsIter {
-    data: Rc<KwargsData>,
-    pos: usize,
-}
-
-/*
-impl Iterator<Item=Value> for KwargsIter {
-
-}
-*/
-
-#[derive(Debug)]
-pub struct KwargsDict {
-    index: usize,
-    // TODO: mark taken?
-    named: SmallMap<String, Value>,
-    kwargs_arg: Option<Value>,
-}
-
-impl TypedIterable for KwargsDict {
-    fn to_iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
-        if self.index < self.named.len() {
-            let iter = self
-                .named
-                .keys()
-                .skip(self.index)
-                .map(|e| Value::new(e.clone()));
-            if let Some(ref args) = self.kwargs_arg {
-                let inner = args.iter().unwrap();
-                let vec: Vec<_> = inner.into_iter().collect();
-                return Box::new(iter.chain(vec.into_iter()));
-            }
-            return Box::new(iter);
-        } else {
-            if let Some(ref args) = self.kwargs_arg {
-                let inner = args.iter().unwrap();
-                let vec: Vec<_> = inner.into_iter().collect();
-                return Box::new(vec.into_iter());
-            }
-        }
-        Box::new(std::iter::empty())
-    }
-}
-
-impl CloneForCell for KwargsDict {
-    fn clone_for_cell(&self) -> Self {
-        let kwargs_arg = self.kwargs_arg.as_ref().map(|v| {
-            Self::map_kwargs_arg(
-                &v,
-                |dict| Value::new(dict.clone_for_cell()),
-                |kwargsdict| Value::new(kwargsdict.clone_for_cell()),
-            )
-        });
-
-        let mut named = SmallMap::with_capacity(self.named.len());
-        for (k, v) in &self.named {
-            named.insert(k.clone(), v.shared());
-        }
-
-        Self::new(named, kwargs_arg)
-    }
-}
-
-/*
-impl std::ops::Deref for KwargsDict {
-    type Target = KwargsData;
-
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-*/
-
-impl KwargsDict {
-    fn map_kwargs_arg<T, FL: FnOnce(&Dictionary) -> T, FR: FnOnce(&KwargsDict) -> T>(
-        kwargs: &Value,
-        left: FL,
-        right: FR,
-    ) -> T {
-        if let Some(dict) = kwargs.downcast_ref::<Dictionary>() {
-            return left(&*dict);
-        }
-
-        if let Some(dict) = kwargs.downcast_ref::<KwargsDict>() {
-            return right(&*dict);
-        }
-
-        unreachable!()
-    }
-
-    fn map_kwargs_arg_mut<T, FL: FnOnce(&mut Dictionary) -> T, FR: FnOnce(&mut KwargsDict) -> T>(
-        kwargs: &mut Value,
-        left: FL,
-        right: FR,
-    ) -> T {
-        if let Some(mut dict) = kwargs.downcast_mut::<Dictionary>().unwrap() {
-            return left(&mut *dict);
-        }
-
-        if let Some(mut dict) = kwargs.downcast_mut::<KwargsDict>().unwrap() {
-            return right(&mut *dict);
-        }
-
-        unreachable!()
-    }
-
-    fn new(named: SmallMap<String, Value>, kwargs_arg: Option<Value>) -> Self {
-        Self {
-            index: 0,
-            named,
-            kwargs_arg: kwargs_arg.map(|a| a.shared()),
-        }
-    }
-    fn next(&mut self, name: &str) -> Option<Value> {
-        if let Some(v) = self.named.remove(name) {
-            return Some(v);
-        }
-        if let Some(ref mut kwargs) = self.kwargs_arg {
-            return Self::map_kwargs_arg_mut(
-                kwargs,
-                |dict| {
-                    dict.remove(&Value::new(name.to_string()))
-                        .ok()
-                        .and_then(|e| e)
-                },
-                |kwargsdict| {
-                    kwargsdict
-                        .remove(&Value::new(name.to_string()))
-                        .ok()
-                        .and_then(|e| e)
-                },
-            );
-        }
-        None
-    }
-    pub fn insert(&mut self, key: Value, value: Value) -> Result<Value, ValueError> {
-        if let Some(ref mut kwargs) = self.kwargs_arg {
-            self.named.remove(&key.to_string());
-            let key1 = &key;
-            let key2 = &key;
-            let val1 = &value;
-            let val2 = &value;
-            return Self::map_kwargs_arg_mut(
-                kwargs,
-                |dict| dict.insert(key1.clone(), val1.clone()),
-                |kwargsdict| kwargsdict.insert(key2.clone(), val2.clone()),
-            );
-        } else {
-            return Ok(self
-                .named
-                .insert(key.to_string(), value)
-                .unwrap_or(Value::new(NoneType::None)));
-        }
-    }
-
-    fn remaining(&self) -> usize {
-        self.named.len()
-    }
-
-    fn check_no_more_args(&self) -> Result<(), ValueError> {
-        Ok(())
-    }
-
-    fn into_hash_map<T: TryParamConvertFromValue>(
-        mut self,
-    ) -> Result<SmallMap<String, T>, ValueError> {
-        let mut r = SmallMap::with_capacity(self.remaining());
-
-        for (k, v) in self.named.into_iter() {
-            let v: Result<_, _> = T::try_from(v);
-            let v = v.map_err(|_| ValueError::IncorrectParameterTypeNamed(""))?;
-            r.insert(k, v);
-        }
-        if let Some(ref kwargs) = self.kwargs_arg.take() {
-            let kwargs: &Value = kwargs;
-            for k in kwargs.iter() {
-                for k in k.iter() {
-                    let k: Value = k;
-                    r.insert(
-                        k.to_str(),
-                        T::try_from(kwargs.at(k)?)
-                            .map_err(|_| ValueError::IncorrectParameterTypeNamed(""))?,
-                    );
-                }
-            }
-        }
-        Ok(r)
-    }
-
-    pub fn items(&self) -> Vec<(Value, Value)> {
-        let mut r = Vec::with_capacity(self.remaining());
-        for (k, v) in self.named.iter() {
-            r.push((Value::new(k.clone()), v.clone()));
-        }
-        if let Some(ref kwargs) = self.kwargs_arg {
-            let kwargs: &Value = kwargs;
-            for k in kwargs.iter() {
-                for k in k.iter() {
-                    let k: Value = k;
-                    let v = kwargs.at(k.clone()).unwrap();
-                    r.push((k, v));
-                }
-            }
-        }
-        r
-    }
-
-    pub fn remove(&mut self, key: &Value) -> Result<Option<Value>, ValueError> {
-        if let Some(v) = self.named.remove(&key.to_str()) {
-            return Ok(Some(v));
-        }
-
-        if let Some(ref mut kwargs) = self.kwargs_arg {
-            return Self::map_kwargs_arg_mut(
-                kwargs,
-                |dict| dict.remove(&key),
-                |kwargsdict| kwargsdict.remove(&key),
-            );
-        }
-
-        Ok(None)
-    }
-}
-
-impl TypedValue for KwargsDict {
-    type Holder = MutableCell<Self>;
-
-    /// Return a string describing the type of self, as returned by the type() function.
-    const TYPE: &'static str = "kwargsdict";
-
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        // TODO
-        Box::new(iter::empty())
-    }
-
-    fn set_at(&mut self, attribute: Value, new_value: Value) -> Result<(), ValueError> {
-        self.insert(attribute, new_value)?;
-        Ok(())
-    }
-
-    /// Return a string representation of self, as returned by the repr() function.
-    fn collect_repr(&self, s: &mut String) {
-        s.push('<');
-        s.push_str(Self::TYPE);
-        s.push('>');
-    }
-
-    fn to_json(&self) -> String {
-        panic!("unsupported for type {}", Self::TYPE)
-    }
-
-    /// Convert self to a Boolean truth value, as returned by the bool() function.
-    fn to_bool(&self) -> bool {
-        // TODO
-        true
-    }
-
-    fn get_attr(&self, attr: &str) -> ValueResult {
-        panic!("no attr {}", attr)
-    }
-
-    /// Perform an array or dictionary indirection.
-    ///
-    /// This returns the result of `a[index]` if `a` is indexable.
-    fn at(&self, index: Value) -> ValueResult {
-        if let Some(ref v) = index.value_holder().find_in(&self.named) {
-            return Ok((*v).clone());
-        }
-
-        if let Some(ref kw) = self.kwargs_arg {
-            return kw.at(index);
-        }
-
-        Err(ValueError::KeyNotFound(index))
-    }
-
-    fn slice(
-        &self,
-        _start: Option<Value>,
-        _stop: Option<Value>,
-        _stride: Option<Value>,
-    ) -> ValueResult {
-        unimplemented!("could be done")
-    }
-
-    /// Returns an iterable over the value of this container if this value hold an iterable
-    /// container.
-    fn iter(&self) -> Result<&dyn TypedIterable, ValueError> {
-        Ok(self)
-    }
-
-    /// Returns the length of the value, if this value is a sequence.
-    fn length(&self) -> Result<i64, ValueError> {
-        unimplemented!("len")
-    }
-
-    fn is_in(&self, other: &Value) -> Result<bool, ValueError> {
-        if let Some(ref v) = other.value_holder().find_in(&self.named) {
-            return Ok(true);
-        }
-
-        if let Some(ref kw) = self.kwargs_arg {
-            return kw.is_in(other);
-        }
-
-        return Ok(false);
-    }
-
-    fn add(&self, _other: &Self) -> Result<Self, ValueError> {
-        unimplemented!("add")
-    }
-}
-
-impl From<KwargsDict> for Value {
-    fn from(a: KwargsDict) -> Value {
-        let mut v = Value::new(a);
-        v.freeze();
-        v.shared()
-    }
 }
 
 pub enum FunctionInvoker<'a> {
@@ -882,8 +357,8 @@ pub struct ParameterParser<'a> {
     signature: &'a [FunctionParameter],
     index: usize,
     function_type: &'a FunctionType,
-    args: ArgsArray,
-    kwargs: KwargsDict,
+    args: vec::IntoIter<Value>,
+    kwargs: SmallMap<String, Value>,
 }
 
 impl<'a> ParameterParser<'a> {
@@ -895,7 +370,6 @@ impl<'a> ParameterParser<'a> {
         args: Option<Value>,
         kwargs_arg: Option<Value>,
     ) -> Result<ParameterParser<'a>, ValueError> {
-        /*
         // Collect args
         let mut av = positional;
         if let Some(x) = args {
@@ -904,7 +378,6 @@ impl<'a> ParameterParser<'a> {
                 Err(..) => return Err(FunctionError::ArgsArrayIsNotIterable.into()),
             }
         };
-        let positional = av.into_iter();
         // Collect kwargs
         let mut kwargs = named;
         if let Some(x) = kwargs_arg {
@@ -931,10 +404,10 @@ impl<'a> ParameterParser<'a> {
             signature,
             index: 0,
             function_type,
-            positional,
+            args: av.into_iter(),
             kwargs,
         })
-        */
+        /*
         Ok(ParameterParser {
             signature,
             function_type,
@@ -942,6 +415,7 @@ impl<'a> ParameterParser<'a> {
             args: ArgsArray::new(positional, args),
             kwargs: KwargsDict::new(named, kwargs_arg),
         })
+        */
     }
 
     pub fn next_normal(&mut self, name: &str) -> Result<Value, ValueError> {
@@ -958,20 +432,20 @@ impl<'a> ParameterParser<'a> {
     pub fn next_optional(&mut self, name: &str) -> Option<Value> {
         if let Some(x) = self.args.next() {
             Some(x)
-        } else if let Some(r) = self.kwargs.next(name) {
+        } else if let Some(r) = self.kwargs.remove(name) {
             Some(r.clone())
         } else {
             None
         }
     }
 
-    pub fn next_with_default_value(&mut self, name: &str, default_value: &Value) -> Value {
+    pub fn next_with_default_value(&mut self, name: &str, default_value: &FrozenValue) -> Value {
         self.next_optional(name)
-            .unwrap_or_else(|| default_value.clone())
+            .unwrap_or_else(|| Value::from_frozen(default_value.clone()))
     }
 
-    pub fn next_args_array(&mut self) -> ArgsArray {
-        mem::replace(&mut self.args, ArgsArray::new(Vec::new(), None))
+    pub fn next_args_array(&mut self) -> Vec<Value> {
+        std::mem::replace(&mut self.args, Vec::new().into_iter()).collect()
     }
     /*
             index: usize,
@@ -986,13 +460,13 @@ impl<'a> ParameterParser<'a> {
 
     */
 
-    pub fn next_kwargs_dict(&mut self) -> KwargsDict {
-        mem::replace(&mut self.kwargs, KwargsDict::new(SmallMap::new(), None))
+    pub fn next_kwargs_dict(&mut self) -> SmallMap<String, Value> {
+        std::mem::replace(&mut self.kwargs, SmallMap::new())
     }
 
     pub fn check_no_more_args(&mut self) -> Result<(), ValueError> {
-        self.args.check_no_more_args()?;
-        self.kwargs.check_no_more_args()?;
+        // self.args.check_no_more_args()?;
+        // self.kwargs.check_no_more_args()?;
         Ok(())
     }
 
@@ -1093,12 +567,12 @@ impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> Native
     }
 }
 
+impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static>  TypedValueUtils for NativeFunction<F> {}
+
 /// Define the function type
 impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> TypedValue
     for NativeFunction<F>
 {
-    type Holder = ImmutableCell<NativeFunction<F>>;
-
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {
@@ -1113,16 +587,25 @@ impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> TypedV
         collect_repr(&self.function_type, &self.signature, s);
     }
 
-    const TYPE: &'static str = "function";
-
+    fn get_type(&self) -> &'static str {
+        "function"
+    }
     fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
         Ok(FunctionInvoker::Native(NativeFunctionInvoker::new(self)))
     }
 }
 
-impl TypedValue for WrappedMethod {
-    type Holder = ImmutableCell<WrappedMethod>;
+impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> Clone
+    for NativeFunction<F>
+{
+    fn clone(&self) -> Self {
+        unimplemented!()
+    }
+}
 
+impl TypedValueUtils for WrappedMethod {}
+
+impl TypedValue for WrappedMethod {
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {
@@ -1140,7 +623,9 @@ impl TypedValue for WrappedMethod {
     fn collect_repr(&self, s: &mut String) {
         self.method.collect_repr(s);
     }
-    const TYPE: &'static str = "function";
+    fn get_type(&self) -> &'static str {
+        "function"
+    }
 
     fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
         let mut inv = self.method.new_invoker()?;

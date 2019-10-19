@@ -117,9 +117,15 @@ impl CloneForCell for Set {
     }
 }
 
-impl TypedValue for Set {
-    type Holder = MutableCell<Set>;
+impl MutableValue for Set {}
 
+impl TypedValueUtils for Set {
+    fn new_value(self) -> Value {
+        MutableValue::make_mutable(self)
+    }
+}
+
+impl TypedValue for Set {
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {
@@ -153,23 +159,29 @@ impl TypedValue for Set {
         collector.push(']');
     }
 
-    const TYPE: &'static str = "set";
+    fn get_type(&self) -> &'static str {
+        "set"
+    }
     fn to_bool(&self) -> bool {
         !self.content.is_empty()
     }
 
-    fn equals(&self, other: &Set) -> Result<bool, ValueError> {
-        if self.content.len() != other.content.len() {
-            return Ok(false);
-        }
-
-        for a in &self.content {
-            if !other.content.contains(a) {
+    fn equals(&self, other: &Value) -> Result<bool, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            if self.content.len() != other.content.len() {
                 return Ok(false);
             }
+
+            for a in &self.content {
+                if !other.content.contains(a) {
+                    return Ok(false);
+                }
+            }
+
+            return Ok(true);
         }
 
-        Ok(true)
+        Ok(false)
     }
 
     fn at(&self, index: Value) -> ValueResult {
@@ -227,17 +239,20 @@ impl TypedValue for Set {
     ///     == Value::from(vec![1, 2, 3, 2, 3])
     /// # );
     /// ```
-    fn add(&self, other: &Set) -> Result<Self, ValueError> {
-        let mut result = Set {
-            content: LinkedHashSet::new(),
-        };
-        for x in &self.content {
-            result.content.insert(x.clone());
+    fn add(&self, other: &Value) -> Result<Value, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            let mut result = Set {
+                content: LinkedHashSet::new(),
+            };
+            for x in &self.content {
+                result.content.insert(x.clone());
+            }
+            for x in &other.content {
+                result.content.insert_if_absent(x.clone());
+            }
+            return Ok(Value::new(result));
         }
-        for x in &other.content {
-            result.content.insert_if_absent(x.clone());
-        }
-        Ok(result)
+        Err(unsupported!(self, "+", Some(other)))
     }
 
     fn get_hash(&self) -> Result<u64, ValueError> {

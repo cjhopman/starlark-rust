@@ -15,7 +15,9 @@
 //! Define simpler version of the evaluation function
 use super::Dialect;
 use super::{EvalException, FileLoader};
-use crate::environment::{Environment, FrozenEnvironment, LocalEnvironment, TypeValues};
+use crate::environment::{
+    Environment, FrozenEnvironment, GlobalEnvironment, LocalEnvironment, TypeValues,
+};
 use crate::values::*;
 use codemap::CodeMap;
 use codemap_diagnostic::Diagnostic;
@@ -26,12 +28,12 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct SimpleFileLoader {
     map: Arc<Mutex<HashMap<String, FrozenEnvironment>>>,
-    parent_env: FrozenEnvironment,
+    parent_env: GlobalEnvironment,
     codemap: Arc<Mutex<CodeMap>>,
 }
 
 impl SimpleFileLoader {
-    pub fn new(map: &Arc<Mutex<CodeMap>>, parent_env: FrozenEnvironment) -> SimpleFileLoader {
+    pub fn new(map: &Arc<Mutex<CodeMap>>, parent_env: GlobalEnvironment) -> SimpleFileLoader {
         SimpleFileLoader {
             map: Arc::new(Mutex::new(HashMap::new())),
             parent_env,
@@ -42,6 +44,8 @@ impl SimpleFileLoader {
 
 impl FileLoader for SimpleFileLoader {
     fn load(&self, path: &str) -> Result<FrozenEnvironment, EvalException> {
+        unimplemented!()
+        /*
         {
             let lock = self.map.lock().unwrap();
             if lock.contains_key(path) {
@@ -59,8 +63,9 @@ impl FileLoader for SimpleFileLoader {
         ) {
             return Err(EvalException::DiagnosedError(d));
         }
+        */
 
-        unimplemented!()
+        // unimplemented!()
         /*
         env.freeze();
                          self.map
@@ -89,7 +94,7 @@ pub fn eval(
     content: &str,
     dialect: Dialect,
     env: &mut LocalEnvironment,
-    file_loader_env: FrozenEnvironment,
+    file_loader_env: GlobalEnvironment,
 ) -> Result<Value, Diagnostic> {
     super::eval(
         map,
@@ -97,7 +102,7 @@ pub fn eval(
         content,
         dialect,
         env,
-        TypeValues::new(file_loader_env.clone()),
+        file_loader_env.get_type_values(),
         SimpleFileLoader::new(map, file_loader_env),
     )
 }
@@ -118,14 +123,14 @@ pub fn eval_file(
     path: &str,
     build: Dialect,
     env: &mut LocalEnvironment,
-    file_loader_env: FrozenEnvironment,
+    file_loader_env: GlobalEnvironment,
 ) -> Result<Value, Diagnostic> {
     super::eval_file(
         map,
         path,
         build,
         env,
-        TypeValues::new(file_loader_env.clone()),
+        file_loader_env.get_type_values(),
         SimpleFileLoader::new(map, file_loader_env),
     )
 }

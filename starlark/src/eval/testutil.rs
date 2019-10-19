@@ -24,6 +24,7 @@ use std::sync;
 
 /// Execute a starlark snippet with an empty environment.
 pub fn starlark_empty(snippet: &str) -> Result<bool, Diagnostic> {
+    /*
     let map = sync::Arc::new(sync::Mutex::new(CodeMap::new()));
     let mut env = environment::LocalEnvironment::new("test");
     match noload::eval(
@@ -40,15 +41,20 @@ pub fn starlark_empty(snippet: &str) -> Result<bool, Diagnostic> {
             Err(d)
         }
     }
+    */
+    unimplemented!()
 }
 
 /// Execute a starlark snippet with an empty environment.
 pub fn starlark_empty_no_diagnostic(snippet: &str) -> Result<bool, Diagnostic> {
+    /*
     starlark_no_diagnostic(
         &mut environment::LocalEnvironment::new("test"),
         snippet,
         TypeValues::new(environment::LocalEnvironment::new("no-type-values").frozen().unwrap()),
     )
+    */
+    unimplemented!()
 }
 
 /// Execute a starlark snippet with the passed environment.

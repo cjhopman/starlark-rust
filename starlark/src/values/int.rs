@@ -70,25 +70,28 @@ where
 {
     match right.downcast_ref::<i64>() {
         Some(right) => Ok(Value::new(f(left, *right)?)),
-        None => Err(ValueError::OperationNotSupported {
-            op: op.to_owned(),
-            left: i64::TYPE.to_owned(),
-            right: Some(right.get_type().to_owned()),
-        }),
+        None => Err(unsupported!(&left, op, Some(&right))),
+    }
+}
+
+impl TypedValueUtils for i64 {
+    fn new_frozen(self) -> FrozenValue {
+        FrozenValue(FrozenInner::Int(self))
     }
 }
 
 /// Define the int type
 impl TypedValue for i64 {
-    type Holder = ImmutableCell<Self>;
-    const TYPE: &'static str = "int";
-
-    fn new_value(self) -> Value {
-        Value(ValueInner::Int(ValueHolder::new(self)))
+    fn get_type(&self) -> &'static str {
+        "int"
     }
 
-    fn equals(&self, other: &i64) -> Result<bool, ValueError> {
-        Ok(self == other)
+    fn equals(&self, other: &Value) -> Result<bool, ValueError> {
+        if let Some(other) = other.downcast_ref::<i64>() {
+            Ok(*self == *other)
+        } else {
+            Err(unsupported!(self, "==", Some(&*other)))
+        }
     }
 
     fn collect_repr(&self, s: &mut String) {
@@ -107,17 +110,31 @@ impl TypedValue for i64 {
     fn get_hash(&self) -> Result<u64, ValueError> {
         Ok(*self as u64)
     }
-    fn plus(&self) -> Result<i64, ValueError> {
-        Ok(*self)
+    fn plus(&self) -> Result<Value, ValueError> {
+        Ok(Value::from(*self))
     }
-    fn minus(&self) -> Result<i64, ValueError> {
-        self.checked_neg().ok_or(ValueError::IntegerOverflow)
+    fn minus(&self) -> Result<Value, ValueError> {
+        self.checked_neg()
+            .map(Value::from)
+            .ok_or(ValueError::IntegerOverflow)
     }
-    fn add(&self, other: &i64) -> Result<i64, ValueError> {
-        self.checked_add(*other).ok_or(ValueError::IntegerOverflow)
+    fn add(&self, other: &Value) -> Result<Value, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            self.checked_add(*other)
+                .map(Value::from)
+                .ok_or(ValueError::IntegerOverflow)
+        } else {
+            Err(unsupported!(self, "+", Some(other)))
+        }
     }
-    fn sub(&self, other: &i64) -> Result<i64, ValueError> {
-        self.checked_sub(*other).ok_or(ValueError::IntegerOverflow)
+    fn sub(&self, other: &Value) -> Result<Value, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            self.checked_sub(*other)
+                .map(Value::from)
+                .ok_or(ValueError::IntegerOverflow)
+        } else {
+            Err(unsupported!(self, "-", Some(other)))
+        }
     }
     fn mul(&self, other: Value) -> ValueResult {
         match other.downcast_ref::<i64>() {
@@ -168,8 +185,12 @@ impl TypedValue for i64 {
         Box::new(iter::empty())
     }
 
-    fn compare(&self, other: &i64) -> Result<Ordering, ValueError> {
-        Ok(self.cmp(other))
+    fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            Ok(self.cmp(&*other))
+        } else {
+            Err(unsupported!(self, "==", Some(other)))
+        }
     }
 }
 

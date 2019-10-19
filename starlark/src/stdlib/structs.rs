@@ -19,23 +19,36 @@ use crate::values::error::ValueError;
 use crate::values::*;
 
 /// `struct()` implementation.
+#[derive(Clone)]
 pub struct StarlarkStruct {
     bound: bool,
     pub fields: SmallMap<String, Value>,
 }
 
 impl StarlarkStruct {
-    pub fn new(fields : SmallMap<String, Value>) -> Self {
+    pub fn new(fields: SmallMap<String, Value>) -> Self {
         Self {
             bound: false,
-            fields
+            fields,
         }
     }
 }
 
-impl TypedValue for StarlarkStruct {
-    type Holder = ImmutableCell<StarlarkStruct>;
+impl From<StarlarkStruct> for Value {
+    fn from(s: StarlarkStruct) -> Value {
+        MutableValue::make_mutable(s)
+    }
+}
 
+impl MutableValue for StarlarkStruct {}
+
+impl TypedValueUtils for StarlarkStruct {
+    fn new_value(self) -> Value {
+        MutableValue::make_mutable(self)
+    }
+}
+
+impl TypedValue for StarlarkStruct {
     fn to_json(&self) -> String {
         let mut s = "{".to_string();
         s += &self
@@ -54,41 +67,24 @@ impl TypedValue for StarlarkStruct {
         Box::new(self.fields.values().cloned())
     }
 
-    fn bind(&self, vars: &dyn Binder) -> Result<Option<Value>, ValueError> {
+    fn bind(&self, vars: &mut dyn Binder) -> Result<FrozenValue, ValueError> {
         if self.bound {
-            return Ok(None);
+            panic!()
         }
 
         // println!("binding struct");
 
         let mut bound = SmallMap::new();
-        let mut changed = false;
 
         for (k, v) in &self.fields {
             let b = v.bind(vars)?;
-            changed |= b.is_some();
-            bound.insert(k.to_string(), b);
+            bound.insert(k.to_string(), b.into());
         }
 
-        if !changed {
-            return Ok(None);
-        }
-
-        let mut bound_fields = SmallMap::new();
-        for (k, v) in &self.fields {
-            match bound.remove(k).unwrap() {
-                Some(v) => {
-                    bound_fields.insert(k.to_string(), v);
-                }
-                None => {
-                    bound_fields.insert(k.to_string(), v.clone());
-                }
-            }
-        }
-        return Ok(Some(Value::new(StarlarkStruct {
+        return Ok(FrozenValue::new(StarlarkStruct {
             bound: true,
-            fields: bound_fields,
-        })));
+            fields: bound,
+        }));
     }
 
     fn collect_repr(&self, r: &mut String) {
@@ -104,25 +100,30 @@ impl TypedValue for StarlarkStruct {
         r.push_str(")");
     }
 
-    const TYPE: &'static str = "struct";
+    fn get_type(&self) -> &'static str {
+        "struct"
+    }
+    fn equals(&self, other: &Value) -> Result<bool, ValueError> {
+        if let Some(ref other) = other.downcast_ref::<StarlarkStruct>() {
+            if self.fields.len() != other.fields.len() {
+                return Ok(false);
+            }
 
-    fn equals(&self, other: &StarlarkStruct) -> Result<bool, ValueError> {
-        if self.fields.len() != other.fields.len() {
-            return Ok(false);
-        }
-
-        for (field, a) in &self.fields {
-            match other.fields.get(field) {
-                None => return Ok(false),
-                Some(b) => {
-                    if !a.equals(b)? {
-                        return Ok(false);
+            for (field, a) in &self.fields {
+                match other.fields.get(field) {
+                    None => return Ok(false),
+                    Some(b) => {
+                        if !a.equals(b)? {
+                            return Ok(false);
+                        }
                     }
                 }
             }
+
+            return Ok(true);
         }
 
-        Ok(true)
+        Err(unsupported!(self, "==", Some(other)))
     }
 
     fn get_attr(&self, attribute: &str) -> Result<Value, ValueError> {

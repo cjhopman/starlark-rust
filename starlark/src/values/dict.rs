@@ -24,7 +24,7 @@ use std::convert::TryFrom;
 use std::hash::Hash;
 
 /// The Dictionary type
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Dictionary {
     content: SmallMap<Value, Value>,
 }
@@ -131,10 +131,26 @@ impl CloneForCell for Dictionary {
     }
 }
 
+impl From<Dictionary> for Value {
+    fn from(d: Dictionary) -> Value {
+        MutableValue::make_mutable(d)
+    }
+}
+
+impl TypedValueUtils for Dictionary {
+    fn new_value(self) -> Value {
+        MutableValue::make_mutable(self)
+    }
+
+    fn new_frozen(self) -> FrozenValue {
+        FrozenValue(FrozenInner::Object(Arc::new(self)))
+    }
+    
+}
+
+impl MutableValue for Dictionary {}
 /// Define the Dictionary type
 impl TypedValue for Dictionary {
-    type Holder = MutableCell<Dictionary>;
-
     fn values_for_descendant_check_and_freeze<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = Value> + 'a> {
@@ -174,28 +190,33 @@ impl TypedValue for Dictionary {
         )
     }
 
-    const TYPE: &'static str = "dict";
+    fn get_type(&self) -> &'static str {
+        "dict"
+    }
     fn to_bool(&self) -> bool {
         !self.content.is_empty()
     }
 
-    fn equals(&self, other: &Dictionary) -> Result<bool, ValueError> {
-        if self.content.len() != other.content.len() {
-            return Ok(false);
-        }
+    fn equals(&self, other: &Value) -> Result<bool, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            if self.content.len() != other.content.len() {
+                return Ok(false);
+            }
 
-        for (k, v) in &self.content {
-            match other.content.get(k) {
-                None => return Ok(false),
-                Some(w) => {
-                    if !v.equals(w)? {
-                        return Ok(false);
+            for (k, v) in &self.content {
+                match other.content.get(k) {
+                    None => return Ok(false),
+                    Some(w) => {
+                        if !v.equals(w)? {
+                            return Ok(false);
+                        }
                     }
                 }
             }
-        }
 
-        Ok(true)
+            return Ok(true);
+        }
+        Err(unsupported!(self, "==", Some(other)))
     }
 
     fn at(&self, index: Value) -> ValueResult {
@@ -229,17 +250,20 @@ impl TypedValue for Dictionary {
         Ok(())
     }
 
-    fn add(&self, other: &Dictionary) -> Result<Dictionary, ValueError> {
-        let mut result = Dictionary {
-            content: SmallMap::new(),
-        };
-        for (k, v) in &self.content {
-            result.content.insert(k.clone(), v.clone());
+    fn add(&self, other: &Value) -> Result<Value, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            let mut result = Dictionary {
+                content: SmallMap::new(),
+            };
+            for (k, v) in &self.content {
+                result.content.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &other.content {
+                result.content.insert(k.clone(), v.clone());
+            }
+            return Ok(Value::from(result));
         }
-        for (k, v) in &other.content {
-            result.content.insert(k.clone(), v.clone());
-        }
-        Ok(result)
+        Err(unsupported!(self, "+", Some(other)))
     }
 }
 

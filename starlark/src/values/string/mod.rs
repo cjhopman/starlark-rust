@@ -30,9 +30,9 @@ impl CloneForCell for String {
     }
 }
 
-impl TypedValue for String {
-    type Holder = ImmutableCell<String>;
+impl TypedValueUtils for String {}
 
+impl TypedValue for String {
     fn find_in<'a>(&'_ self, map: &'a SmallMap<String, Value>) -> Option<&'a Value> {
         map.get(self)
     }
@@ -60,7 +60,10 @@ impl TypedValue for String {
         self.to_repr_slow()
     }
 
-    const TYPE: &'static str = "string";
+    fn get_type(&self) -> &'static str {
+        "string"
+    }
+
     fn to_bool(&self) -> bool {
         !self.is_empty()
     }
@@ -71,12 +74,20 @@ impl TypedValue for String {
         Ok(s.finish())
     }
 
-    fn equals(&self, other: &String) -> Result<bool, ValueError> {
-        Ok(*self == *other)
+    fn equals(&self, other: &Value) -> Result<bool, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            Ok(*self == *other)
+        } else {
+            Err(unsupported!(self, "==", Some(other)))
+        }
     }
 
-    fn compare(&self, other: &String) -> Result<Ordering, ValueError> {
-        Ok(self.cmp(&other))
+    fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            Ok(self.cmp(&other))
+        } else {
+            Err(unsupported!(self, "cmp()", Some(other)))
+        }
     }
 
     fn at(&self, index: Value) -> ValueResult {
@@ -159,13 +170,22 @@ impl TypedValue for String {
     /// Value::from("abc").add(Value::from("def")).unwrap() == Value::from("abcdef")
     /// # );
     /// ```
-    fn add(&self, other: &String) -> Result<String, ValueError> {
-        Ok(self.chars().chain(other.chars()).collect())
+    fn add(&self, other: &Value) -> Result<Value, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            let s: String = self.chars().chain(other.chars()).collect();
+            Ok(Value::from(s))
+        } else {
+            Err(unsupported!(self, "+", Some(other)))
+        }
     }
 
-    fn add_assign(&mut self, other: &String) -> Result<(), ValueError> {
-        *self += other;
-        Ok(())
+    fn add_assign(&mut self, other: &Value) -> Result<(), ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            *self += &**other;
+            Ok(())
+        } else {
+            Err(unsupported!(self, "+=", Some(other)))
+        }
     }
 
     /// Repeat `other` times this string.

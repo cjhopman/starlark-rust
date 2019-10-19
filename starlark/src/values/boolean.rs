@@ -25,13 +25,16 @@ impl From<bool> for Value {
     }
 }
 
+impl TypedValueUtils for bool {
+    fn new_frozen(self) -> FrozenValue {
+        FrozenValue(FrozenInner::Bool(self))
+    }
+}
+
 /// Define the bool type
 impl TypedValue for bool {
-    type Holder = ImmutableCell<Self>;
-    const TYPE: &'static str = "bool";
-
-    fn new_value(self) -> Value {
-        Value(ValueInner::Bool(ValueHolder::new(self)))
+    fn get_type(&self) -> &'static str {
+        "bool"
     }
 
     fn collect_repr(&self, s: &mut String) {
@@ -60,10 +63,19 @@ impl TypedValue for bool {
         Box::new(iter::empty())
     }
 
-    fn equals(&self, other: &bool) -> Result<bool, ValueError> {
-        Ok(self == other)
+    fn equals(&self, other: &Value) -> Result<bool, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            Ok(*self == *other)
+        } else {
+            Err(unsupported!(self, "==", Some(other)))
+        }
     }
-    fn compare(&self, other: &bool) -> Result<Ordering, ValueError> {
-        Ok(self.cmp(other))
+
+    fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
+        if let Some(other) = other.downcast_ref::<Self>() {
+            Ok(self.cmp(&*other))
+        } else {
+            Err(unsupported!(self, "<>", Some(other)))
+        }
     }
 }

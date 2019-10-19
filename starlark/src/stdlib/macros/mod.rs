@@ -74,7 +74,7 @@ macro_rules! starlark_signature {
                 // explicitly specify parameter type to:
                 // * verify that default value is convertible to required type
                 // * help type inference find type parameters
-                ::std::convert::From::<starlark_parse_param_type!(1 : $pt)>::from($e)
+                $crate::values::to_frozen_for_defaults($e)
             )
         );
         $( starlark_signature!($signature $($rest)+) )?
@@ -83,7 +83,7 @@ macro_rules! starlark_signature {
         $signature.push(
             $crate::values::function::FunctionParameter::WithDefaultValue(
                 starlark_param_name!($is_named $t).to_owned(),
-                $crate::values::Value::from($e)
+                $crate::values::to_frozen_for_defaults($e)
             )
         );
         $( starlark_signature!($signature $($rest)+) )?
@@ -217,7 +217,7 @@ macro_rules! starlark_signatures {
             let mut signature = Vec::new();
             starlark_signature!(signature $($signature)*);
             $env.add_type_value(ty, name,
-                $crate::values::function::NativeFunction::new(name.to_owned(), $name, signature));
+                $crate::values::function::NativeFunction::new(name.to_owned(), $name, signature).as_frozen());
         }
         $(starlark_signatures!{ $env,
             $($rest)+
@@ -338,7 +338,7 @@ macro_rules! starlark_module {
         }
 
         #[doc(hidden)]
-        pub fn $name(mut env: $crate::environment::LocalEnvironment) -> $crate::environment::LocalEnvironment {
+        pub fn $name(mut env: $crate::environment::GlobalEnvironmentBuilder) -> $crate::environment::GlobalEnvironmentBuilder {
             starlark_signatures!{ env,
                 $($t)*
             }
@@ -500,7 +500,7 @@ mod tests {
             }
         }
 
-        let env = global(LocalEnvironment::new("root"));
-        env.get("nop").unwrap();
+        // let env = global(LocalEnvironment::new("root"));
+        // env.get("nop").unwrap();
     }
 }

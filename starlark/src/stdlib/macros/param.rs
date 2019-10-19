@@ -140,17 +140,19 @@ mod test {
     use std::sync::{Arc, Mutex};
 
     starlark_module! { global =>
-        cc_binary(name: String, srcs: Vec<String> = Vec::new()) {
+    
+        cc_binary(name: String, srcs) {
             // real implementation may write it to a global variable
             Ok(Value::new(format!("{:?} {:?}", name, srcs)))
         }
+        
     }
 
     #[test]
     fn test_simple() {
         let env = global_environment();
         let env = global(env);
-        let env = env.frozen().unwrap();
+        let env = env.build();
 
         let mut child = env.child("my");
 
@@ -160,7 +162,7 @@ mod test {
             "cc_binary(name='star', srcs=['a.cc', 'b.cc'])",
             Dialect::Build,
             &mut child,
-            TypeValues::new(env),
+            env.get_type_values(),
         )
         .unwrap();
 

@@ -25,9 +25,9 @@ use starlark::environment::{Environment, TypeValues};
 use starlark::eval::call_stack::CallStack;
 use starlark::eval::simple::eval;
 use starlark::small_map::SmallMap;
-use starlark::syntax::errors::SyntaxError;
 use starlark::stdlib::global_environment_with_extensions;
 use starlark::syntax::dialect::Dialect;
+use starlark::syntax::errors::SyntaxError;
 use starlark::values::error::ValueError;
 use std::fs::File;
 use std::io::prelude::*;
@@ -71,7 +71,7 @@ fn assert_diagnostic(
 pub fn do_conformance_test(path: &str, content: &str) {
     let map = Arc::new(Mutex::new(CodeMap::new()));
     let global = global_environment_with_extensions();
-    let global = global.frozen().unwrap();
+    let global = global.build();
     let mut prelude = global.child("PRELUDE");
     eval(
         &map,
@@ -157,7 +157,7 @@ pub fn do_bench(bencher: &mut Bencher, path: &str) {
 
     let map = Arc::new(Mutex::new(CodeMap::new()));
     let global = global_environment_with_extensions();
-    let global = global.frozen().unwrap();
+    let global = global.build();
     let mut prelude = global.child("PRELUDE");
     eval(
         &map,

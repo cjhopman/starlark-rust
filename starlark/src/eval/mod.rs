@@ -284,7 +284,11 @@ pub(crate) enum EvaluationContextEnvironment<'a> {
     /// Module-level
     Module(&'a mut LocalEnvironment, Rc<dyn FileLoader>),
     /// Function-level
-    Function(&'a LocalEnvironment, &'a HashMap<String, Value>, IndexedLocals<'a>),
+    Function(
+        &'a LocalEnvironment,
+        &'a HashMap<String, Value>,
+        IndexedLocals<'a>,
+    ),
     /// Scope inside function, e. g. list comprenension
     Nested(&'a EvaluationContextEnvironment<'a>, IndexedLocals<'a>),
 }
@@ -323,9 +327,7 @@ impl<'a> EvaluationContextEnvironment<'a> {
 
     fn get_slot(&self, _slot: usize, name: &str) -> Result<Value, EnvironmentError> {
         match self {
-            EvaluationContextEnvironment::Function(_, _, locals) => {
-                locals.get_slot(_slot, name)
-            }
+            EvaluationContextEnvironment::Function(_, _, locals) => locals.get_slot(_slot, name),
             EvaluationContextEnvironment::Nested(_, locals) => locals.get_slot(_slot, name),
             _ => unreachable!("slot in non-indexed environment"),
         }
@@ -515,7 +517,7 @@ fn eval_call<'a>(
     if let Some(ref x) = kwargs {
         invoker.push_kwargs(eval_expr(x, context)?);
     }
-  
+
     let res = invoker.invoke(&context);
 
     t(
@@ -983,7 +985,10 @@ pub fn eval_single_stmt(stmt: &AstStatement, context: &mut EvaluationContext) ->
                     Parameter::WithDefaultValue(ref n, ref v) => {
                         let mut v = eval_expr(v, context)?;
                         v.freeze();
-                        FunctionParameter::WithDefaultValue(n.node.clone(), v)
+                        FunctionParameter::WithDefaultValue(
+                            n.node.clone(),
+                            t(v.bind(&mut ThrowingBinder {}), x)?,
+                        )
                     }
                     Parameter::Args(ref n) => FunctionParameter::ArgsArray(n.node.clone()),
                     Parameter::KWArgs(ref n) => FunctionParameter::KWArgsDict(n.node.clone()),
