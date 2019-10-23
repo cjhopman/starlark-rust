@@ -25,14 +25,11 @@ pub enum NoneType {
     None,
 }
 
-impl TypedValueUtils for NoneType {
-    fn new_frozen(self) -> FrozenValue {
-        FrozenValue(FrozenInner::None(self))
-    }
-}
+impl ImmutableValue for NoneType {}
 
 /// Define the NoneType type
 impl TypedValue for NoneType {
+    fn as_dyn_any(&self) -> &dyn Any { self }
     fn get_type(&self) -> &'static str {
         "NoneType"
     }
@@ -51,12 +48,6 @@ impl TypedValue for NoneType {
         } else {
             Err(unsupported!(self, "cmp()", Some(other)))
         }
-    }
-
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(iter::empty())
     }
 
     fn collect_repr(&self, s: &mut String) {

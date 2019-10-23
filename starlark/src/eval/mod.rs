@@ -283,10 +283,11 @@ impl<'a> IndexedLocals<'a> {
 pub(crate) enum EvaluationContextEnvironment<'a> {
     /// Module-level
     Module(&'a mut LocalEnvironment, Rc<dyn FileLoader>),
+
     /// Function-level
     Function(
         &'a LocalEnvironment,
-        &'a HashMap<String, Value>,
+        &'a FrozenEnvironment,
         IndexedLocals<'a>,
     ),
     /// Scope inside function, e. g. list comprenension
@@ -313,10 +314,7 @@ impl<'a> EvaluationContextEnvironment<'a> {
             EvaluationContextEnvironment::Module(env, ..) => env.get(name),
             EvaluationContextEnvironment::Function(_, vars, locals) => match locals.get(name)? {
                 Some(v) => Ok(v),
-                None => vars
-                    .get(name)
-                    .cloned()
-                    .ok_or_else(move || EnvironmentError::VariableNotFound(name.to_owned())),
+                None => vars.get(name),
             },
             EvaluationContextEnvironment::Nested(parent, locals) => match locals.get(name)? {
                 Some(v) => Ok(v),
@@ -609,7 +607,7 @@ fn eval_transformed<'a>(
             for i in v {
                 r.push(eval_transformed(i, context)?);
             }
-            Ok(Value::new(tuple::Tuple::new(r)))
+            Ok(Value::new_mutable(tuple::Tuple::new(r)))
         }
         TransformedExpr::List(ref v, ..) => {
             let mut r = Vec::with_capacity(v.len());
@@ -684,7 +682,7 @@ fn eval_expr(expr: &AstExpr, context: &mut EvaluationContext) -> EvalResult {
     match expr.node {
         Expr::Tuple(ref v) => {
             let r = eval_vector!(v, context);
-            Ok(Value::new(tuple::Tuple::new(r)))
+            Ok(Value::new_mutable(tuple::Tuple::new(r)))
         }
         Expr::Dot(ref e, ref s) => eval_dot(expr, e, s, context),
         Expr::Call(ref e, ref pos, ref named, ref args, ref kwargs) => {
@@ -699,7 +697,9 @@ fn eval_expr(expr: &AstExpr, context: &mut EvaluationContext) -> EvalResult {
         }
         Expr::Identifier(ref i) => t(context.env.get(&i.node), i),
         Expr::Slot(slot, ref i) => t(context.env.get_slot(slot, &i.node), i),
-        Expr::CompiledLiteral(_, ref v) => Ok(v.shared()),
+        Expr::CompiledLiteral(_, ref v) => {
+            Ok(v.shared())
+        }
         Expr::Literal(_) => panic!("literals should be compiled at this point: {}", expr.node),
         Expr::Not(ref s) => Ok(Value::new(!eval_expr(s, context)?.to_bool())),
         Expr::Minus(ref s) => t(eval_expr(s, context)?.minus(), expr),
@@ -984,10 +984,9 @@ pub fn eval_single_stmt(stmt: &AstStatement, context: &mut EvaluationContext) ->
                     Parameter::Normal(ref n) => FunctionParameter::Normal(n.node.clone()),
                     Parameter::WithDefaultValue(ref n, ref v) => {
                         let mut v = eval_expr(v, context)?;
-                        v.freeze();
                         FunctionParameter::WithDefaultValue(
                             n.node.clone(),
-                            t(v.bind(&mut ThrowingBinder {}), x)?,
+                            t(v.freeze(), x)?,
                         )
                     }
                     Parameter::Args(ref n) => FunctionParameter::ArgsArray(n.node.clone()),
@@ -1007,9 +1006,11 @@ pub fn eval_single_stmt(stmt: &AstStatement, context: &mut EvaluationContext) ->
         Statement::Load(ref name, ref v) => {
             // println!("loading {:?}", name);
             let loadenv = context.env.loader().load(name)?;
+            let module_env = context.env.assert_module_env();
+            module_env.add_modules(loadenv.get_modules());
             for &(ref new_name, ref orig_name) in v.iter() {
                 t(
-                    context.env.assert_module_env().import_symbol(
+                    module_env.import_symbol(
                         &loadenv,
                         &orig_name.node,
                         &new_name.node,
@@ -1017,6 +1018,7 @@ pub fn eval_single_stmt(stmt: &AstStatement, context: &mut EvaluationContext) ->
                     &new_name.span.merge(orig_name.span),
                 )?
             }
+
             Ok(Value::new(NoneType::None))
         }
         _ => unreachable!(),

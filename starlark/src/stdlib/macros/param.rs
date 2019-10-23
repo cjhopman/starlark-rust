@@ -17,7 +17,7 @@
 use crate::small_map::SmallMap;
 use crate::values::dict::Dictionary;
 use crate::values::error::ValueError;
-use crate::values::{TypedValue, Value};
+use crate::values::{*};
 use std::convert::TryInto;
 use std::hash::Hash;
 
@@ -60,7 +60,7 @@ impl TryParamConvertFromValue for Value {
     }
 }
 
-impl<T: TypedValue + Clone + 'static> TryParamConvertFromValue for T {
+impl<T: TypedValue + Clone + 'static> TryParamConvertFromValue for T where T : ImmutableValue + Clone{
     fn try_from(source: Value) -> Result<Self, ValueError> {
         match source.downcast_ref::<T>() {
             Some(t) => Ok(t.clone()),
@@ -68,6 +68,18 @@ impl<T: TypedValue + Clone + 'static> TryParamConvertFromValue for T {
         }
     }
 }
+
+
+/*
+impl<T: TypedValueMeta + Clone + 'static> TryParamConvertFromValue for T {
+    fn try_from(source: Value) -> Result<Self, ValueError> {
+        match source.downcast_ref::<T>() {
+            Some(t) => Ok(t.clone()),
+            None => Err(ValueError::IncorrectParameterType),
+        }
+    }
+}
+*/
 
 impl TryParamConvertFromValue for i32 {
     fn try_from(source: Value) -> Result<Self, ValueError> {

@@ -74,16 +74,16 @@ where
     }
 }
 
-impl TypedValueUtils for i64 {
-    fn new_frozen(self) -> FrozenValue {
-        FrozenValue(FrozenInner::Int(self))
-    }
-}
+impl ImmutableValue for i64 {}
 
 /// Define the int type
 impl TypedValue for i64 {
     fn get_type(&self) -> &'static str {
         "int"
+    }
+
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
     }
 
     fn equals(&self, other: &Value) -> Result<bool, ValueError> {
@@ -179,12 +179,6 @@ impl TypedValue for i64 {
         })
     }
 
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(iter::empty())
-    }
-
     fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
         if let Some(other) = other.downcast_ref::<Self>() {
             Ok(self.cmp(&*other))
@@ -196,6 +190,7 @@ impl TypedValue for i64 {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use crate::int_op;
 
     #[test]

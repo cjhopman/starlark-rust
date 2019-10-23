@@ -18,7 +18,7 @@ use crate::eval::{eval_expr, make_set, set_expr, t, EvalException, EvalResult, E
 use crate::syntax::ast::ToAst;
 use crate::syntax::ast::{AstClause, AstExpr, Clause, Expr};
 use crate::values::dict::Dictionary;
-use crate::values::{TypedValue, Value};
+use crate::values::{*};
 use codemap::{Span, Spanned};
 use codemap_diagnostic::Diagnostic;
 use std::collections::{HashMap, HashSet};
@@ -226,7 +226,7 @@ impl ComprehensionCompiled {
                     let v = t(e.at(Value::from(1)), &tuple)?;
                     t(r.set_at(k, v), &tuple)?;
                 }
-                Ok(Value::new(r))
+                Ok(Value::new_mutable(r))
             }
         }
     }

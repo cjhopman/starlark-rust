@@ -15,7 +15,7 @@
 //! `range()` builtin implementation
 
 use crate::values::iter::TypedIterable;
-use crate::values::{ImmutableCell, TypedValue, TypedValueUtils, Value, ValueError};
+use crate::values::{*, };
 use std::num::NonZeroI64;
 use std::{iter, mem};
 
@@ -70,9 +70,10 @@ impl Iterator for RangeIterator {
     }
 }
 
-impl TypedValueUtils for Range {}
+impl ImmutableValue for Range {}
 
 impl TypedValue for Range {
+    fn as_dyn_any(&self) -> &dyn Any { self }
     fn get_type(&self) -> &'static str {
         "range"
     }
@@ -206,10 +207,6 @@ impl TypedValue for Range {
                     == 0,
             )
         }
-    }
-
-    fn values_for_descendant_check_and_freeze(&self) -> Box<dyn Iterator<Item = Value>> {
-        Box::new(iter::empty())
     }
 }
 

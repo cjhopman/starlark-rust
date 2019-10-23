@@ -23,6 +23,9 @@ extern crate starlark;
 #[macro_use]
 extern crate lazy_static;
 
+#[macro_use]
+extern crate traitcast;
+
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
 use starlark::environment::{Environment, FrozenEnvironment, GlobalEnvironment, GlobalEnvironmentBuilder, LocalEnvironment};
@@ -50,6 +53,8 @@ use starlark::values::error::*;
 use starlark::values::function::*;
 use starlark::values::none::*;
 use starlark::values::*;
+
+use traitcast::*;
 
 const EXIT_CODE_FAILURE: i32 = 2;
 
@@ -112,19 +117,36 @@ pub struct Opt {
 
 use std;
 
-type ValueMap = SmallMap<::std::string::String, starlark::values::Value>;
+trait TV : TraitcastFrom {}
+
+trait L : TV {}
+
+struct ML {}
+
+traitcast::traitcast!(struct ML: TV, L);
+
+impl TV for ML {}
+impl L for ML {}
+
+type ValueMap = SmallMap<::std::string::String, starlark::values::FrozenValue>;
+
+type RuleRecorder = std::sync::Arc<std::sync::Mutex<SmallMap<String, ValueMap>>>;
 
 fn some_func(
     __ctx: &starlark::eval::EvaluationContext,
     mut args: ParameterParser,
-    recorder: &std::rc::Rc<std::cell::RefCell<SmallMap<String, ValueMap>>>,
+    recorder: &RuleRecorder,
 ) -> starlark::values::ValueResult {
-    let map: SmallMap<String, Value> = args.next_arg()?.into_kw_args_dict("kwargs")?;
-
-    let name = map.get("name").unwrap();
+    let map: SmallMap<String, Value> = args.next_arg()?.into_kw_args_dict("kwargs")?;    
     // println!("adding {}", name);
 
-    recorder.borrow_mut().insert(name.to_string(), map);
+    let mut frozen  = SmallMap::new();
+    for (k, v) in map {
+        frozen.insert(k, v.freeze()?);
+    }
+    let name = frozen.get("name").unwrap();
+
+    recorder.lock().unwrap().insert(name.to_string(), frozen);
     Ok::<Value, ValueError>(Value::from(NoneType::None))
 }
 
@@ -136,7 +158,7 @@ fn provider_impl(
     let mut kwargs: SmallMap<::std::string::String, starlark::values::Value> =
         args.next_arg()?.into_kw_args_dict("kwargs")?;
     args.check_no_more_args()?;
-    Ok(Value::new(starlark::stdlib::structs::StarlarkStruct::new(
+    Ok(Value::new_mutable(starlark::stdlib::structs::StarlarkStruct::new(
         kwargs,
     )))
 }
@@ -184,13 +206,14 @@ starlark_module! {global_functions =>
         arch.insert("is_unknown".to_string(), Value::new(false));
         arch.insert("is_x86_64".to_string(), Value::new(true));
         let mut info : SmallMap<String, Value> = SmallMap::new();
-        info.insert("os".to_string(), Value::new(starlark::stdlib::structs::StarlarkStruct::new(os)));
-        info.insert("arch".to_string(), Value::new(starlark::stdlib::structs::StarlarkStruct::new(arch)));
-        Ok(Value::new(starlark::stdlib::structs::StarlarkStruct::new(info)))
+        info.insert("os".to_string(), Value::new_mutable(starlark::stdlib::structs::StarlarkStruct::new(os)));
+        info.insert("arch".to_string(), Value::new_mutable(starlark::stdlib::structs::StarlarkStruct::new(arch)));
+        Ok(Value::new_mutable(starlark::stdlib::structs::StarlarkStruct::new(info)))
 
     }
 
     provider(fields) {
+        let _f = fields;
         let mut signature = Vec::new();
         signature.push(starlark::values::function::FunctionParameter::KWArgsDict(
             "kwargs".to_owned(),
@@ -206,7 +229,7 @@ starlark_module! {global_functions =>
 
 fn register_rule_def(
     mut env: GlobalEnvironmentBuilder,
-    recorder: std::rc::Rc<std::cell::RefCell<SmallMap<String, ValueMap>>>,
+    recorder: RuleRecorder,
     name: &str,
 ) -> GlobalEnvironmentBuilder {
     let mut signature = Vec::new();
@@ -227,7 +250,7 @@ fn register_rule_def(
 
 fn register_rule_exists(
     mut env: GlobalEnvironmentBuilder,
-    recorder: std::rc::Rc<std::cell::RefCell<SmallMap<String, ValueMap>>>,
+    recorder: RuleRecorder,
 ) -> GlobalEnvironmentBuilder {
     let mut signature = Vec::new();
     signature.push(starlark::values::function::FunctionParameter::Normal(
@@ -239,7 +262,7 @@ fn register_rule_exists(
             "rule_exists".to_owned(),
             move |_c, mut p| {
                 let k: String = p.next_arg()?.into_normal("")?;
-                let exists = recorder.borrow().contains_key(&k);
+                let exists = recorder.lock().unwrap().contains_key(&k);
                 Ok(Value::new(exists))
             },
             signature,
@@ -257,7 +280,7 @@ fn register_natives(mut env: LocalEnvironment) -> LocalEnvironment {
 
     env.set(
         "native",
-        Value::new(starlark::stdlib::structs::StarlarkStruct::new(map)),
+        Value::new_mutable(starlark::stdlib::structs::StarlarkStruct::new(map)),
     )
     .unwrap();
     env
@@ -280,12 +303,12 @@ mod buck {
 
     pub struct ParserInfo {
         package: PathBuf,
-        config: Rc<ConfigMap>,
+        config: Arc<ConfigMap>,
         shared: Rc<SharedState>,
     }
 
     impl ParserInfo {
-        pub fn new(package: PathBuf, config: Rc<ConfigMap>, shared: Rc<SharedState>) -> Self {
+        pub fn new(package: PathBuf, config: Arc<ConfigMap>, shared: Rc<SharedState>) -> Self {
             Self {
                 package,
                 config,
@@ -396,7 +419,7 @@ mod buck {
             signature.push(
                 starlark::values::function::FunctionParameter::WithDefaultValue(
                     "$default".to_owned(),
-                    FrozenValue::new(NoneType::None),
+                    FrozenValue::make_immutable(NoneType::None),
                 ),
             );
             env.set(
@@ -509,6 +532,12 @@ mod buck {
 use std::str::FromStr;
 
 fn main() {
+    {
+        let ml = ML{};
+        let tv : &dyn TV = &ml;
+        let cast : &dyn L = tv.cast_ref().unwrap();
+    }
+
     let opt = Opt::from_args();
 
     if let Some(d) = opt.dir {
@@ -518,7 +547,7 @@ fn main() {
     let command = opt.command;
     let ast = opt.ast;
     let buck = !opt.not_buck;
-    let recorder = std::rc::Rc::new(std::cell::RefCell::new(SmallMap::new()));
+    let recorder = Arc::new(Mutex::new(SmallMap::new()));
 
     let mut cells = HashMap::new();
 
@@ -582,7 +611,7 @@ fn main() {
     };
     let free_args_empty = opt.files.is_empty();
 
-    let config = Rc::new(config);
+    let config = Arc::new(config);
     for i in opt.files.into_iter() {
         if buck {
             let path: PathBuf = PathBuf::from_str(&i).unwrap();
@@ -598,7 +627,7 @@ fn main() {
             let mut env = parser.create_env(path.to_str().unwrap());
             let res = parser.eval_file(&i, dialect, &mut env, global.clone());
 
-            for (k, _) in &*recorder.borrow() {
+            for (k, _) in &*recorder.lock().unwrap() {
                 println!("{:?}", k);
             }
 

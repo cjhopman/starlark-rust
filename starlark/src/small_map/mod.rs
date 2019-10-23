@@ -15,7 +15,7 @@ pub struct BorrowedHash<'a, Q: SmallHash + ?Sized> {
 impl<'a, Q: SmallHash + ?Sized> BorrowedHash<'a, Q> {
     fn new(v: &'a Q) -> Self {
         BorrowedHash {
-            hash: v.get_hash() as u32,
+            hash: v.get_small_hash() as u32,
             v,
         }
     }
@@ -38,11 +38,11 @@ impl<'a, Q: SmallHash + ?Sized> Hash for BorrowedHash<'a, Q> {
 }
 
 pub trait SmallHash: Eq {
-    fn get_hash(&self) -> u64;
+    fn get_small_hash(&self) -> u64;
 }
 
 impl<T: Hash + Eq + ?Sized> SmallHash for T {
-    fn get_hash(&self) -> u64 {
+    fn get_small_hash(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.hash(&mut hasher);
         hasher.finish()
@@ -64,7 +64,7 @@ impl<V: SmallHash> Hash for Hashed<V> {
 impl<V: SmallHash> Hashed<V> {
     fn new(v: V) -> Self {
         Hashed {
-            hash: v.get_hash() as u32,
+            hash: v.get_small_hash() as u32,
             v,
         }
     }
@@ -177,7 +177,7 @@ impl<K: SmallHash, V> VecMap<K, V> {
     where
         Q: ?Sized + SmallHash + Equivalent<K>,
     {
-        let hash = key.get_hash() as u32;
+        let hash = key.get_small_hash() as u32;
         for i in 0..self.values.len() {
             if self.hashes[i] == hash {
                 let v = &self.values[i];
@@ -190,7 +190,7 @@ impl<K: SmallHash, V> VecMap<K, V> {
     }
 
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
-        let hash = key.get_hash() as u32;
+        let hash = key.get_small_hash() as u32;
         self.get_mut_hashed(hash, key)
     }
 
@@ -209,7 +209,7 @@ impl<K: SmallHash, V> VecMap<K, V> {
     where
         Q: SmallHash + Equivalent<K> + ?Sized,
     {
-        let hash = key.get_hash() as u32;
+        let hash = key.get_small_hash() as u32;
         for i in 0..self.values.len() {
             if self.hashes[i] == hash {
                 if key.equivalent(&self.values[i].0) {
@@ -221,7 +221,7 @@ impl<K: SmallHash, V> VecMap<K, V> {
     }
 
     pub fn insert(&mut self, key: K, mut value: V) -> Option<V> {
-        let hash = key.get_hash() as u32;
+        let hash = key.get_small_hash() as u32;
         if let Some(v) = self.get_mut_hashed(hash, &key) {
             std::mem::swap(v, &mut value);
             Some(value)
@@ -242,7 +242,7 @@ impl<K: SmallHash, V> VecMap<K, V> {
             return None;
         }
 
-        let hash = key.get_hash() as u32;
+        let hash = key.get_small_hash() as u32;
         for i in 0..len {
             if self.hashes[i] == hash {
                 if key.equivalent(&self.values[i].0) {

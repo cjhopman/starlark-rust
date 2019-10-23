@@ -28,12 +28,10 @@ use crate::values::dict::Dictionary;
 use crate::values::error::ValueError;
 use crate::values::function::*;
 use crate::values::none::NoneType;
-use crate::values::{
-    function, mutability::ImmutableCell, Binder, FrozenValue, TypedValue, TypedValueUtils, Value, ValueResult,
-};
+use crate::values::{*};
 use codemap::{CodeMap, Spanned};
 use codemap_diagnostic::Diagnostic;
-use std::cell::RefCell;
+use std::{ any::Any, cell::RefCell};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::iter;
@@ -198,10 +196,9 @@ impl DefCompiled {
 /// Starlark function internal representation and implementation of [`TypedValue`].
 #[derive(Clone)]
 pub(crate) struct Def {
-    bound: bool,
+    module_name: String,
     signature: Vec<FunctionParameter>,
     function_type: FunctionType,
-    captured_env: Option<HashMap<String, Value>>,
     map: Arc<Mutex<CodeMap>>,
     stmt: DefCompiled,
 }
@@ -214,58 +211,30 @@ impl Def {
         map: Arc<Mutex<CodeMap>>,
     ) -> Value {
         Value::new(Def {
-            bound: false,
+            module_name: module.clone(),
             function_type: FunctionType::Def(stmt.name.node.clone(), module),
             signature,
             stmt,
-            captured_env: None,
             map,
         })
-    }
-
-    pub fn capture_env(&self, vars: &mut dyn Binder) -> Result<HashMap<String, Value>, ValueError> {
-        let mut captured_env: HashMap<String, Value> = HashMap::new();
-        for n in &self.stmt.non_local_names {
-            match vars.get(n)? {
-                Some(v) => {
-                    captured_env.insert(n.clone(), v.into());
-                }
-                None => {
-                    // TODO
-                    /*
-                        let v = vars
-                            .get(n)
-                            .ok_or_else(|| crate::values::error::RuntimeError {
-                                code: "bad",
-                                message: format!("couldn't find {}", n),
-                                label: "".to_string(),
-                            })?;
-                        captured_env.insert((*n).clone(), v);
-                    */
-                }
-            }
-        }
-        Ok(captured_env)
     }
 }
 
 impl From<Def> for Value {
     fn from(def: Def) -> Value {
-        Value::make_immutable(def)
+        FrozenValue::make_immutable(def).into()
     }
 }
 
-impl TypedValueUtils for Def {}
+impl ImmutableValue for Def {}
 
 impl TypedValue for Def {
     fn get_type(&self) -> &'static str {
         "function"
     }
 
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(iter::empty())
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
     }
 
     fn collect_str(&self, collector: &mut String) {
@@ -279,36 +248,11 @@ impl TypedValue for Def {
     fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
         Ok(FunctionInvoker::Def(DefInvoker::new(
             self,
+            &self.module_name,
             &self.stmt.local_names_to_indices,
             self.stmt.args_slot,
             self.stmt.kwargs_slot,
         )))
-    }
-
-    fn bind(&self, vars: &mut dyn Binder) -> Result<FrozenValue, ValueError> {
-        if self.bound {
-            panic!()
-        }
-
-        // println!("binding {}", self.stmt.name.node);
-        if self.stmt.non_local_names.is_empty() {
-            // println!("nothing to bind");
-            return Ok(FrozenValue::new(self.clone()));
-        }
-
-        let captured_env = self.capture_env(vars)?;
-
-        // println!("non-local names: {:?}", self.stmt.non_local_names);
-        // println!("bound names: {:?}", captured_env.keys());
-
-        Ok(FrozenValue::new(Def {
-            bound: true,
-            function_type: self.function_type.clone(),
-            signature: self.signature.clone(),
-            stmt: self.stmt.clone(),
-            captured_env: Some(captured_env),
-            map: self.map.clone(),
-        }))
     }
 }
 
@@ -429,7 +373,7 @@ impl<'a> IndexedParams<'a> {
                         Some(v)
                     }
                     (true, None) => {
-                        let v = Value::new(Dictionary::from(std::mem::replace(
+                        let v = Value::new_mutable(Dictionary::from(std::mem::replace(
                             &mut *self.extra_named.borrow_mut(),
                             SmallMap::new(),
                         )));
@@ -470,7 +414,7 @@ impl<'a> IndexedParams<'a> {
             }
         }
 
-        slots[slot] = Some(Value::new(Dictionary::from(named)));
+        slots[slot] = Some(Value::new_mutable(Dictionary::from(named)));
     }
 
     fn expand_args(&self, slots: &mut Vec<Option<Value>>) {
@@ -548,6 +492,8 @@ impl<'a> IndexedParams<'a> {
 
 pub struct DefInvoker<'a> {
     def: &'a Def,
+    module_name: &'a str,
+
     name_to_index: &'a HashMap<String, usize>,
     num_params: usize,
     idx: usize,
@@ -560,14 +506,13 @@ pub struct DefInvoker<'a> {
     extra_named: SmallMap<Value, Value>,
     star_kwargs: Option<Value>,
 
-    captured_env: HashMap<String, Value>,
-
     slots: Vec<Option<Value>>,
 }
 
 impl<'a> DefInvoker<'a> {
     fn new(
         def: &'a Def,
+        module_name: &'a str,
         name_to_index: &'a HashMap<String, usize>,
         args_slot: usize,
         kwargs_slot: usize,
@@ -575,6 +520,7 @@ impl<'a> DefInvoker<'a> {
         let slots_count = name_to_index.len();
         Self {
             def,
+            module_name,
             name_to_index,
             num_params: def.stmt.params.len(),
             idx: 0,
@@ -584,7 +530,6 @@ impl<'a> DefInvoker<'a> {
             kwargs_slot,
             extra_named: SmallMap::new(),
             star_kwargs: None,
-            captured_env: HashMap::new(),
             slots: vec![None; slots_count],
         }
     }
@@ -611,32 +556,7 @@ impl<'a> DefInvoker<'a> {
         );
 
         let module_env = context.module_env();
-
-        let local_capture;
-        let captured_env;
-
-        if let Some(ref env) = self.def.captured_env {
-            // println!("pre-bound");
-            captured_env = env;
-        } else {
-            // println!("late-binding");
-            struct LocalBinder<'a> {
-                context: &'a LocalEnvironment,
-            }
-
-            impl<'a> Binder for LocalBinder<'a> {
-                fn get(&mut self, name: &str) -> Result<Option<Value>, ValueError> {
-                    match self.context.get(name) {
-                        Ok(v) => Ok(Some(v)),
-                        _ => Ok(None),
-                    }
-                }
-            }
-            local_capture = self.def.capture_env(&mut LocalBinder {
-                context: module_env,
-            })?;
-            captured_env = &local_capture;
-        }
+        let captured_env = module_env.find_module(&self.module_name).unwrap();
 
         let mut ctx = EvaluationContext {
             call_stack: context.call_stack().to_owned(),

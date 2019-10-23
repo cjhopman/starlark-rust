@@ -46,6 +46,8 @@ starlark_module! {global =>
         ok!(s)
     }
 
+    /*
+
     /// set.add: append an element to a set.
     ///
     /// `S.add(x)` adds `x` to the set S, and returns `None`.
@@ -602,4 +604,6 @@ starlark_module! {global =>
         }
         Ok(Value::new(NoneType::None))
     }
+
+    */
 }

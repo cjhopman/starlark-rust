@@ -18,6 +18,7 @@ use crate::environment::TypeValues;
 use crate::eval;
 use crate::eval::noload;
 use crate::syntax::dialect::Dialect;
+use crate::values::*;
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
 use std::sync;

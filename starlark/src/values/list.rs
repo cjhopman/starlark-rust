@@ -17,7 +17,12 @@ use crate::stdlib::list::LIST_REMOVE_ELEMENT_NOT_FOUND_ERROR_CODE;
 use crate::values::error::{RuntimeError, ValueError};
 use crate::values::iter::TypedIterable;
 use crate::values::*;
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::Deref};
+
+#[derive(Clone, Default)]
+struct FrozenList {
+    content: Vec<FrozenValue>,
+}
 
 #[derive(Clone, Default)]
 pub struct List {
@@ -34,19 +39,99 @@ impl<T: Into<Value>> From<Vec<T>> for List {
 
 impl<T: Into<Value>> From<Vec<T>> for Value {
     fn from(a: Vec<T>) -> Value {
-        Value::new(List::from(a))
+        Value::new_mutable(List::from(a))
+    }
+}
+
+impl From<Vec<FrozenValue>> for FrozenValue {
+    fn from(a: Vec<FrozenValue>) -> FrozenValue {
+        FrozenValue::make_immutable(FrozenList { content: a })
     }
 }
 
 impl From<List> for Value {
     fn from(a: List) -> Value {
-        MutableValue::make_mutable(a)
+        Value::make_mutable(a)
+    }
+}
+
+impl From<FrozenList> for Value {
+    fn from(a: FrozenList) -> Value {
+        FrozenValue::make_immutable(a).into()
+    }
+}
+
+#[derive(Clone, Default)]
+struct ListGen<T : ValueLike> {
+    content: Vec<T>,
+}
+
+
+
+impl ListGen<FrozenValue> {
+
+}
+
+
+pub trait ListBase {
+    type Item: ValueLike;
+
+    fn content(&self) -> &Vec<Self::Item>;
+
+    fn content_mut(&mut self) -> &mut Vec<Value>;
+}
+
+pub trait ListLike {
+    fn len(&self) -> usize;
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a>;
+}
+
+impl ListLike for FrozenList {
+    fn len(&self) -> usize {
+        self.content().len()
+    }
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
+        Box::new(self.content().iter().map(|e| Value::from_frozen(e.clone())))
+    }
+}
+
+impl ListLike for List {
+    fn len(&self) -> usize {
+        unimplemented!()
+    }
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
+        Box::new(self.content().iter().cloned())
+    }
+}
+
+pub trait ValueAsList {
+    fn as_list(&self) -> Option<VRef<dyn ListLike>>;
+}
+
+pub trait ValueAsListMut {
+    fn as_list_mut(&self) -> Result<Option<VRefMut<List>>, ValueError>;
+}
+
+impl ValueAsListMut for Value {
+    fn as_list_mut(&self) -> Result<Option<VRefMut<List>>, ValueError> {
+        self.downcast_mut::<List>()
+    }
+}
+
+impl<T: ValueLike> ValueAsList for T {
+    fn as_list(&self) -> Option<VRef<dyn ListLike>> {
+        self.downcast_ref::<FrozenList>()
+            .map(|o| VRef::map(o, |e| e as &dyn ListLike))
+            .or_else(|| {
+                self.downcast_ref::<List>()
+                    .map(|o| VRef::map(o, |e| e as &dyn ListLike))
+            })
     }
 }
 
 impl List {
     pub fn new() -> Value {
-        Value::new(List {
+        Value::new_mutable(List {
             content: Vec::new(),
         })
     }
@@ -112,23 +197,43 @@ impl CloneForCell for List {
     }
 }
 
-impl MutableValue for List {}
 
-impl TypedValueUtils for List {
-    fn new_value(self) -> Value {
-        MutableValue::make_mutable(self)
+impl ListBase for List {
+    type Item = Value;
+    fn content(&self) -> &Vec<Self::Item> {
+        &self.content
     }
-    fn new_frozen(self) -> FrozenValue {
-        FrozenValue(FrozenInner::Object(Arc::new(self)))
+    fn content_mut(&mut self) -> &mut Vec<Value> {
+        &mut self.content
     }
-    
 }
 
-impl TypedValue for List {
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(self.content.iter().cloned())
+impl MutableValue for List {
+    fn freeze(&self) -> Result<FrozenValue, ValueError> {
+        let mut frozen = Vec::new();
+        for v in self.content() {
+            frozen.push(v.freeze()?)
+        }
+        Ok(FrozenValue::from(frozen))
+    }
+}
+
+impl ImmutableValue for FrozenList {}
+
+impl ListBase for FrozenList {
+    type Item = FrozenValue;
+    fn content(&self) -> &Vec<Self::Item> {
+        &self.content
+    }
+
+    fn content_mut(&mut self) -> &mut Vec<Value> {
+        panic!()
+    }
+}
+
+impl<T: ListBase + TypedValueMulti<Outer=dyn ListLike> + 'static> TypedValue for T {
+    fn naturally_mutable(&self) -> bool {
+        true
     }
 
     /// Returns a string representation for the list
@@ -146,7 +251,7 @@ impl TypedValue for List {
     fn collect_repr(&self, s: &mut String) {
         s.push('[');
         let mut first = true;
-        for v in &self.content {
+        for v in self.content() {
             if first {
                 first = false;
             } else {
@@ -160,53 +265,57 @@ impl TypedValue for List {
     fn to_json(&self) -> String {
         format!(
             "[{}]",
-            self.content
-                .iter()
-                .map(Value::to_json)
-                .enumerate()
-                .fold("".to_string(), |accum, s| if s.0 == 0 {
+            self.content().iter().map(|e| e.to_json()).enumerate().fold(
+                "".to_string(),
+                |accum, s| if s.0 == 0 {
                     accum + &s.1
                 } else {
                     accum + ", " + &s.1
-                },)
+                },
+            )
         )
     }
 
-fn get_type(&self) -> &'static str { "list" }    fn to_bool(&self) -> bool {
-        !self.content.is_empty()
+    fn get_type(&self) -> &'static str {
+        "list"
+    }
+    fn to_bool(&self) -> bool {
+        !self.content().is_empty()
     }
 
     fn equals(&self, other: &Value) -> Result<bool, ValueError> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            if self.content.len() != other.content.len() {
-                return Ok(false);
+        let other = other.as_list();
+        match other {
+            None => {
+                return Err(unsupported!(self, "==", Some(other)));
             }
-
-            let mut self_iter = self.content.iter();
-            let mut other_iter = other.content.iter();
-
-            loop {
-                match (self_iter.next(), other_iter.next()) {
-                    (Some(a), Some(b)) => {
-                        if !a.equals(b)? {
-                            return Ok(false);
+            Some(ref other) => {
+                if self.content().len() != other.len() {
+                    return Ok(false);
+                }
+                let mut left_iter = self.content().iter();
+                let mut right_iter = other.iter();
+                loop {
+                    match (left_iter.next(), right_iter.next()) {
+                        (Some(a), Some(b)) => {
+                            if !a.equals(&b)? {
+                                return Ok(false);
+                            }
                         }
+                        (None, None) => {
+                            return Ok(true);
+                        }
+                        _ => unreachable!(),
                     }
-                    (None, None) => {
-                        return Ok(true);
-                    }
-                    _ => unreachable!(),
                 }
             }
-        } else {
-            Err(unsupported!(self, "==", Some(other)))
         }
     }
 
     fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            let mut iter1 = self.content.iter();
-            let mut iter2 = other.content.iter();
+        if let Some(other) = other.as_list() {
+            let mut iter1 = self.content().iter();
+            let mut iter2 = other.iter();
             loop {
                 match (iter1.next(), iter2.next()) {
                     (None, None) => return Ok(Ordering::Equal),
@@ -227,15 +336,15 @@ fn get_type(&self) -> &'static str { "list" }    fn to_bool(&self) -> bool {
 
     fn at(&self, index: Value) -> ValueResult {
         let i = index.convert_index(self.length()?)? as usize;
-        Ok(self.content[i].clone())
+        Ok(self.content()[i].clone_value())
     }
 
     fn length(&self) -> Result<i64, ValueError> {
-        Ok(self.content.len() as i64)
+        Ok(self.content().len() as i64)
     }
 
     fn is_in(&self, other: &Value) -> Result<bool, ValueError> {
-        for x in self.content.iter() {
+        for x in self.content().iter() {
             if x.equals(other)? {
                 return Ok(true);
             }
@@ -251,12 +360,9 @@ fn get_type(&self) -> &'static str { "list" }    fn to_bool(&self) -> bool {
     ) -> ValueResult {
         let (start, stop, stride) =
             Value::convert_slice_indices(self.length()?, start, stop, stride)?;
-        Ok(Value::from(tuple::slice_vector(
-            start,
-            stop,
-            stride,
-            self.content.iter(),
-        )))
+        let vec = tuple::slice_vector(start, stop, stride, self.content().iter());
+
+        Ok(Value::new_mutable(List::from(vec)))
     }
 
     fn iter(&self) -> Result<&dyn TypedIterable, ValueError> {
@@ -279,14 +385,14 @@ fn get_type(&self) -> &'static str { "list" }    fn to_bool(&self) -> bool {
     /// # );
     /// ```
     fn add(&self, other: &Value) -> Result<Value, ValueError> {
-        if let Some(other) = other.downcast_ref::<Self>() {
+        if let Some(other) = other.as_list() {
             let mut result = List {
                 content: Vec::new(),
             };
-            for x in &self.content {
-                result.content.push(x.clone());
+            for x in self.content() {
+                result.content.push(x.clone_value());
             }
-            for x in &other.content {
+            for x in other.iter() {
                 result.content.push(x.clone());
             }
             Ok(Value::from(result))
@@ -296,8 +402,8 @@ fn get_type(&self) -> &'static str { "list" }    fn to_bool(&self) -> bool {
     }
 
     fn add_assign(&mut self, other: &Value) -> Result<(), ValueError> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            self.content.extend(other.content.iter().cloned());
+        if let Some(other) = other.as_list() {
+            self.content_mut().extend(other.iter());
             Ok(())
         } else {
             Err(unsupported!(self, "+=", Some(other)))
@@ -326,9 +432,11 @@ fn get_type(&self) -> &'static str { "list" }    fn to_bool(&self) -> bool {
                     content: Vec::new(),
                 };
                 for _i in 0..*l {
-                    result.content.extend(self.content.iter().cloned());
+                    result
+                        .content
+                        .extend(self.content().iter().map(ValueLike::clone_value));
                 }
-                Ok(Value::new(result))
+                Ok(Value::new_mutable(result))
             }
             None => Err(ValueError::IncorrectParameterType),
         }
@@ -347,14 +455,18 @@ fn get_type(&self) -> &'static str { "list" }    fn to_bool(&self) -> bool {
     /// ```
     fn set_at(&mut self, index: Value, new_value: Value) -> Result<(), ValueError> {
         let i = index.convert_index(self.length()?)? as usize;
-        self.content[i] = new_value.clone_for_container(self)?;
+        self.content_mut()[i] = new_value.clone_for_container(self)?;
         Ok(())
+    }
+
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
     }
 }
 
-impl TypedIterable for List {
+impl<T: ListBase + 'static> TypedIterable for T {
     fn to_iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(self.content.iter().cloned())
+        Box::new(self.content().iter().map(ValueLike::clone_value))
     }
 }
 

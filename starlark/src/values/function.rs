@@ -153,12 +153,6 @@ impl From<FunctionArg> for Value {
 }
 
 pub type StarlarkFunctionPrototype = dyn Fn(&EvaluationContext, Vec<FunctionArg>) -> ValueResult;
-// Wrapper for method that have been affected the self object
-#[derive(Clone)]
-pub(crate) struct WrappedMethod {
-    method: Value,
-    self_obj: Value,
-}
 
 // TODO: move that code in some common error code list?
 // CV prefix = Critical Function call
@@ -236,8 +230,12 @@ impl From<FunctionError> for ValueError {
 
 impl WrappedMethod {
     pub fn new(self_obj: Value, method: Value) -> Value {
-        Value::new(WrappedMethod { method, self_obj })
+        Value::new_mutable(WrappedMethod { method, self_obj })
     }
+}
+
+impl CloneForCell for WrappedMethod {
+    fn clone_for_cell(&self) -> Self { unimplemented!() }
 }
 
 impl FunctionType {
@@ -557,7 +555,7 @@ pub struct NativeFunction<F: Fn(&EvaluationContext, ParameterParser) -> ValueRes
     function_type: FunctionType,
 }
 
-impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> NativeFunction<F> {
+impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + Send + Sync + 'static> NativeFunction<F> {
     pub fn new(name: String, function: F, signature: Vec<FunctionParameter>) -> Value {
         Value::new(NativeFunction {
             function,
@@ -567,18 +565,12 @@ impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> Native
     }
 }
 
-impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static>  TypedValueUtils for NativeFunction<F> {}
+impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + Send + Sync + 'static>  ImmutableValue for NativeFunction<F> {}
 
 /// Define the function type
 impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> TypedValue
     for NativeFunction<F>
 {
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(iter::empty())
-    }
-
     fn collect_str(&self, s: &mut String) {
         collect_str(&self.function_type, &self.signature, s);
     }
@@ -593,6 +585,10 @@ impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> TypedV
     fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
         Ok(FunctionInvoker::Native(NativeFunctionInvoker::new(self)))
     }
+
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> Clone
@@ -603,17 +599,24 @@ impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> Clone
     }
 }
 
-impl TypedValueUtils for WrappedMethod {}
+// Wrapper for method that have been affected the self object
+#[derive(Clone)]
+pub(crate) struct WrappedMethod {
+    method: Value,
+    self_obj: Value,
+}
+
+impl MutableValue for WrappedMethod {
+    fn freeze(&self) -> Result<FrozenValue, ValueError> { unimplemented!() }
+}
 
 impl TypedValue for WrappedMethod {
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(vec![self.method.clone(), self.self_obj.clone()].into_iter())
-    }
-
     fn function_id(&self) -> Option<FunctionId> {
         Some(FunctionId(self.method.data_ptr()))
+    }
+
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
     }
 
     fn collect_str(&self, s: &mut String) {

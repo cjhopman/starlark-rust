@@ -30,17 +30,12 @@ impl CloneForCell for String {
     }
 }
 
-impl TypedValueUtils for String {}
+impl ImmutableValue for String {}
 
 impl TypedValue for String {
+    fn as_dyn_any(&self) -> &dyn Any { self }
     fn find_in<'a>(&'_ self, map: &'a SmallMap<String, Value>) -> Option<&'a Value> {
         map.get(self)
-    }
-
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(iter::empty())
     }
 
     fn collect_str(&self, s: &mut String) {
@@ -267,6 +262,7 @@ impl<'a> From<&'a str> for Value {
 #[cfg(test)]
 mod tests {
     use super::super::Value;
+    use super::*;
 
     #[test]
     fn test_to_repr() {

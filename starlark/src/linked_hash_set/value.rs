@@ -18,7 +18,7 @@ use crate::values::error::ValueError;
 use crate::values::hashed_value::HashedValue;
 use crate::values::iter::TypedIterable;
 use crate::values::*;
-use std::num::Wrapping;
+use std::{ any::Any, num::Wrapping};
 
 #[derive(Default, Clone)]
 pub(crate) struct Set {
@@ -27,7 +27,7 @@ pub(crate) struct Set {
 
 impl Set {
     pub fn empty() -> Value {
-        Value::new(Set::default())
+        Value::new_mutable(Set::default())
     }
 
     pub fn from<V: Into<Value>>(values: Vec<V>) -> Result<Value, ValueError> {
@@ -35,7 +35,7 @@ impl Set {
         for v in values.into_iter() {
             result.content.insert_if_absent(HashedValue::new(v.into())?);
         }
-        Ok(Value::new(result))
+        Ok(Value::new_mutable(result))
     }
 
     pub fn insert_if_absent(&mut self, v: Value) -> Result<(), ValueError> {
@@ -107,7 +107,7 @@ impl Set {
 
 impl From<Set> for Value {
     fn from(set: Set) -> Self {
-        Value::new(set)
+        Value::new_mutable(set)
     }
 }
 
@@ -117,19 +117,19 @@ impl CloneForCell for Set {
     }
 }
 
-impl MutableValue for Set {}
-
-impl TypedValueUtils for Set {
-    fn new_value(self) -> Value {
-        MutableValue::make_mutable(self)
-    }
+impl MutableValue for Set {
+     fn freeze(&self) -> Result<FrozenValue, ValueError> {
+         unimplemented!()
+     }
 }
 
 impl TypedValue for Set {
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(self.content.iter().map(|v| v.get_value().clone()))
+    fn naturally_mutable(&self) -> bool {
+        true
+    }
+
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
     }
 
     /// Returns a string representation for the set
@@ -250,7 +250,7 @@ impl TypedValue for Set {
             for x in &other.content {
                 result.content.insert_if_absent(x.clone());
             }
-            return Ok(Value::new(result));
+            return Ok(Value::new_mutable(result));
         }
         Err(unsupported!(self, "+", Some(other)))
     }

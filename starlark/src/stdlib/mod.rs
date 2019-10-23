@@ -906,7 +906,7 @@ starlark_module! {global_functions =>
                 l.push(x.clone())
             }
         }
-        Ok(Value::new(tuple::Tuple::new(l)))
+        Ok(Value::new_mutable(tuple::Tuple::new(l)))
     }
 
     /// [type](
@@ -1014,9 +1014,7 @@ pub fn starlark_default(snippet: &str) -> Result<bool, Diagnostic> {
 
 #[cfg(test)]
 pub mod tests {
-    use super::global_environment;
-    use super::starlark_default;
-    use super::Dialect;
+    use super::*;
     use crate::environment::TypeValues;
     use crate::eval::noload::eval;
     use codemap::CodeMap;

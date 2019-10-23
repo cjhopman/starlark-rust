@@ -98,12 +98,16 @@ pub trait Environment {
     /// Return the parent environment (or `None` if there is no parent).
     fn get_parent(&self) -> Option<&FrozenEnvironment>;
 
+    fn find_module(&self, name: &str) -> Option<&FrozenEnvironment>;
+
+    fn get_modules(&self) -> &HashMap<String, FrozenEnvironment>;
     // fn get_type_values(&self) -> &Arc<TypeValues>;
 }
 
 #[derive(Clone, Debug)]
 pub struct FrozenEnvironment {
     env: Arc<EnvironmentContent<FrozenValue>>,
+    modules: HashMap<String, FrozenEnvironment>,
     global: TypeValues,
 }
 
@@ -117,12 +121,20 @@ impl FrozenEnvironment {
 impl Environment for FrozenEnvironment {
     /// Return the name of this module
     fn name(&self) -> String {
-        self.env.name_.clone()
+        self.env.name.clone()
+    }
+
+    fn get_modules(&self) -> &HashMap<String, FrozenEnvironment> {
+        &self.modules
     }
 
     /// Get the value of the variable `name`
     fn get(&self, name: &str) -> Result<Value, EnvironmentError> {
         self.env.get(name).map(|e| e.into())
+    }
+
+    fn find_module(&self, name: &str) -> Option<&FrozenEnvironment> {
+        self.modules.get(name)
     }
 
     /// Return the parent environment (or `None` if there is no parent).
@@ -134,6 +146,7 @@ impl Environment for FrozenEnvironment {
 #[derive(Debug)]
 pub struct LocalEnvironment {
     env: EnvironmentContent<LocalValue>,
+    modules: HashMap<String, FrozenEnvironment>,
     global: TypeValues,
 }
 
@@ -186,9 +199,12 @@ impl GlobalEnvironmentBuilder {
     pub fn build(mut self) -> GlobalEnvironment {
         let type_objs = TypeValues::new(std::mem::replace(&mut self.type_objs, HashMap::new()));
         GlobalEnvironment {
-            env: LocalEnvironment::wrap(std::mem::replace(&mut self.env, EnvironmentContent::new("", None)), type_objs.clone())
-                .frozen()
-                .unwrap(),
+            env: LocalEnvironment::wrap(
+                std::mem::replace(&mut self.env, EnvironmentContent::new("", None)),
+                type_objs.clone(),
+            )
+            .frozen()
+            .unwrap(),
             type_objs: type_objs,
         }
     }
@@ -214,8 +230,8 @@ impl GlobalEnvironmentBuilder {
 
 #[derive(Debug)]
 pub struct EnvironmentContent<ValueType> {
-    /// A name for this environment, used mainly for debugging.
-    name_: String,
+    /// A name for this environment, required to be unique.
+    name: String,
 
     /// Super environment that represent a higher scope than the current one
     parent: Option<FrozenEnvironment>,
@@ -227,12 +243,20 @@ pub struct EnvironmentContent<ValueType> {
 impl Environment for LocalEnvironment {
     /// Return the name of this module
     fn name(&self) -> String {
-        self.env.name_.clone()
+        self.env.name.clone()
     }
 
     /// Get the value of the variable `name`
     fn get(&self, name: &str) -> Result<Value, EnvironmentError> {
         self.env.get(name).map(|e| e.clone())
+    }
+
+    fn find_module(&self, name: &str) -> Option<&FrozenEnvironment> {
+        self.modules.get(name)
+    }
+
+    fn get_modules(&self) -> &HashMap<String, FrozenEnvironment> {
+        &self.modules
     }
 
     /// Return the parent environment (or `None` if there is no parent).
@@ -246,77 +270,51 @@ impl LocalEnvironment {
         self.env.for_each_var(func);
     }
 
+    pub fn add_modules(&mut self, modules: &HashMap<String, FrozenEnvironment>) {
+        for (k, v) in modules {
+            self.modules.insert(k.clone(), v.clone());
+        }
+    }
+
     /// Create a new environment
     pub fn new(name: &str, global: TypeValues) -> Self {
         Self {
             env: EnvironmentContent::new(name, None),
+            modules: HashMap::new(),
             global,
         }
     }
 
     pub fn wrap(env: EnvironmentContent<Value>, global: TypeValues) -> Self {
-        Self{
+        Self {
             env,
-            global
+            modules: HashMap::new(),
+            global,
         }
     }
 
     pub fn new_child(name: &str, parent: FrozenEnvironment) -> Self {
         Self {
             env: EnvironmentContent::new(name, Some(parent.clone())),
+            modules: HashMap::new(),
             global: parent.global.clone(),
         }
     }
 
     /// Freeze the environment, all its value will become immutable after that
     pub fn frozen(mut self) -> Result<FrozenEnvironment, ValueError> {
-        for v in self.env.variables.values_mut() {
-            v.freeze();
-        }
-
-        struct EnvBinder<'a> {
-            bound: &'a mut HashMap<String, FrozenValue>,
-            env: &'a EnvironmentContent<LocalValue>,
-        }
-
-        impl<'a> Binder for EnvBinder<'a> {
-            fn get(&mut self, name: &str) -> Result<Option<Value>, ValueError> {
-                match self.bound.get(name) {
-                    Some(v) => Ok(Some(Value::from_frozen(v.clone()))),
-                    None => {
-                        match EnvironmentContent::get(self.env, name).ok() {
-                            Some(v) => {
-                                let b = v.val_ref().bind(self)?;
-                                self.bound.insert(name.to_string(), b.into());
-                                Ok(self.bound.get(name).map(|v| Value::from_frozen(v.clone())))
-                            }
-                            None => {
-                                // println!("binding {} failed. not found in env {}", name, self.name_);
-                                Ok(None)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut bound: HashMap<String, FrozenValue> = HashMap::new();
-        {
-            let mut binder = EnvBinder {
-                bound: &mut bound,
-                env: &self.env,
-            };
-            for n in self.env.variables.keys() {
-                binder.get(n);
-            }
-        }
+        let mut frozen: HashMap<String, FrozenValue> = HashMap::new();
+        for (k, v) in std::mem::replace(&mut self.env.variables, Default::default()) {
+            frozen.insert(k, v.freeze()?);
+        }        
 
         Ok(FrozenEnvironment {
             env: Arc::new(EnvironmentContent {
-                name_: self.env.name_,
+                name: self.env.name,
                 parent: self.env.parent.clone(),
-                variables: bound,
+                variables: frozen,
             }),
+            modules: std::mem::replace(&mut self.modules, HashMap::new()),
             global: self.global.clone(),
         })
     }
@@ -350,7 +348,7 @@ where
 {
     fn new(name: &str, parent: Option<FrozenEnvironment>) -> Self {
         Self {
-            name_: name.to_owned(),
+            name: name.to_owned(),
             parent,
             variables: HashMap::new(),
         }
@@ -414,7 +412,7 @@ impl TypeValues {
 
     /// List the attribute of a type
     pub fn list_type_value(&self, obj: &Value) -> Vec<String> {
-        if let Some(ref d) = self.type_objs.get(obj.get_type()) {
+        if let Some(ref d) = self.type_objs.get(obj.get_type()){
             let mut r = Vec::new();
             for k in d.keys() {
                 r.push(k.clone());

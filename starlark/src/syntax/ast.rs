@@ -18,7 +18,7 @@ use super::lexer;
 use crate::eval::compr::ComprehensionCompiled;
 use crate::eval::def::DefCompiled;
 use crate::syntax::dialect::Dialect;
-use crate::values::Value;
+use crate::values::{Value, FrozenValue};
 use codemap::{Span, Spanned};
 use codemap_diagnostic::{Diagnostic, Level, SpanLabel, SpanStyle};
 use lalrpop_util;
@@ -151,7 +151,7 @@ pub enum Expr {
     // local variable index
     Slot(usize, AstString),
     Literal(AstLiteral),
-    CompiledLiteral(AstLiteral, Value),
+    CompiledLiteral(AstLiteral, FrozenValue),
     Not(AstExpr),
     Minus(AstExpr),
     Plus(AstExpr),
@@ -489,7 +489,7 @@ impl Expr {
                         .collect::<Result<_, _>>()?;
 
                     if items.iter().all(|e| e.is_literal()) {
-                        let vals: Vec<_> = items
+                        let vals: Vec<FrozenValue> = items
                             .iter()
                             .map(|e| match e.node {
                                 Expr::CompiledLiteral(_, ref v) => v.clone(),
@@ -498,7 +498,7 @@ impl Expr {
                             .collect();
                         Expr::CompiledLiteral(
                             AstLiteral::ListLiteral(AstListLiteral {}),
-                            Value::from(vals),
+                            FrozenValue::from(vals),
                         )
                     } else {
                         Expr::List(items)
@@ -560,10 +560,10 @@ impl Expr {
                     ComprehensionCompiled::new_dict(key, value, clauses)?,
                 ),
                 Expr::Literal(AstLiteral::StringLiteral(s)) => {
-                    Expr::CompiledLiteral(AstLiteral::StringLiteral(s.clone()), Value::new(s.node))
+                    Expr::CompiledLiteral(AstLiteral::StringLiteral(s.clone()), Value::new(s.node).freeze().unwrap())
                 }
                 Expr::Literal(AstLiteral::IntLiteral(i)) => {
-                    Expr::CompiledLiteral(AstLiteral::IntLiteral(i), Value::new(i.node))
+                    Expr::CompiledLiteral(AstLiteral::IntLiteral(i), Value::new(i.node).freeze().unwrap())
                 }
                 Expr::Literal(AstLiteral::ListLiteral(_)) => unreachable!(),
                 Expr::CompiledLiteral(..) => unreachable!(),
@@ -998,7 +998,7 @@ impl Display for Expr {
                 write!(f, ">")
             }
             Expr::Literal(AstLiteral::ListLiteral(_)) => panic!("this shouldn't exist"),
-            Expr::CompiledLiteral(AstLiteral::ListLiteral(_), ref v) => write!(f, "cmp<{}>", v),
+            Expr::CompiledLiteral(AstLiteral::ListLiteral(_), ref v) => write!(f, "cmp<{:?}>", v),
         }
     }
 }

@@ -16,7 +16,7 @@
 //! they output diagnostic to stderr and the result value to stdout.
 use crate::environment::{FrozenEnvironment, LocalEnvironment, GlobalEnvironment, Environment};
 use crate::syntax::dialect::Dialect;
-use crate::values::Value;
+use crate::values::*;
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
 use std::sync::{Arc, Mutex};

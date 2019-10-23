@@ -15,7 +15,7 @@
 //! Error-safe value and hash pair.
 
 use crate::values::error::ValueError;
-use crate::values::Value;
+use crate::values::*;
 use core::borrow::BorrowMut;
 use std::hash::{Hash, Hasher};
 
@@ -46,8 +46,9 @@ impl HashedValue {
 
     /// Returns error if the value is non hashable.
     pub fn new(value: Value) -> Result<HashedValue, ValueError> {
-        let hash = value.get_hash()?;
-        Ok(HashedValue { hash, value })
+        unimplemented!()
+        // let hash = value.get_hash()?;
+        // Ok(HashedValue { hash, value })
     }
 
     /// Get precomputed hash.

@@ -50,6 +50,10 @@ pub enum RefOrRef<'a, T: ?Sized + 'a> {
     Borrowed(Ref<'a, T>),
 }
 
+pub type VRef<'a, T> = RefOrRef<'a, T>;
+
+pub type VRefMut<'a, T> = RefMut<'a, T>;
+
 impl<'a, T: ?Sized + 'a> Deref for RefOrRef<'a, T> {
     type Target = T;
 
@@ -71,6 +75,24 @@ impl<'a, T: ?Sized + 'a> RefOrRef<'a, T> {
             RefOrRef::Borrowed(p) => RefOrRef::Borrowed(Ref::map(p, f)),
         }
     }
+
+    /*
+        pub fn map_result<U: ?Sized, E : std::fmt::Debug, F>(orig: RefOrRef<'a, T>, f: F) -> Result<RefOrRef<'a, U>, E>
+        where
+            F: FnOnce(&T) -> Result<&U, E>,
+        {
+            match orig {
+                RefOrRef::Ptr(p) => Ok(RefOrRef::Ptr(f(p)?)),
+                RefOrRef::Borrowed(p) => {
+                    let r: Ref<Result<&U, E>> = Ref::map(p, f);
+                    match *r {
+                        Err(e) => Err(e),
+                        Ok(..) => Ok(RefOrRef::Borrowed(Ref::map(r, |e| e.unwrap()))),
+                    }
+                }
+            }
+        }
+    */
 }
 
 /// Container for data which is either `RefCell` or immutable data.
@@ -89,7 +111,6 @@ pub trait ContentCell {
 
     fn test_mut(&self) -> Result<(), ValueError>;
 
-    fn freeze(&self);
     fn freeze_for_iteration(&self);
     fn unfreeze_for_iteration(&self);
 }
@@ -248,15 +269,6 @@ impl<T: CloneForCell> ContentCell for MutableCell<T> {
         }
     }
 
-    fn freeze(&self) {
-        match self.state.get() {
-            MutabilityState::FrozenForIteration(_) => panic!("attempt to freeze during iteration"),
-            MutabilityState::Frozen => {}
-            MutabilityState::Mutable => self.state.set(MutabilityState::Frozen),
-            MutabilityState::Shared => self.state.set(MutabilityState::Frozen),
-        }
-    }
-
     /// Freezes the current value for iterating over.
     fn freeze_for_iteration(&self) {
         match self.state.get() {
@@ -315,8 +327,6 @@ impl<T> ContentCell for ImmutableCell<T> {
     fn test_mut(&self) -> Result<(), ValueError> {
         Err(ValueError::CannotMutateImmutableValue)
     }
-
-    fn freeze(&self) {}
 
     fn freeze_for_iteration(&self) {}
 

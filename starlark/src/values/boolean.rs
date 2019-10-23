@@ -25,16 +25,16 @@ impl From<bool> for Value {
     }
 }
 
-impl TypedValueUtils for bool {
-    fn new_frozen(self) -> FrozenValue {
-        FrozenValue(FrozenInner::Bool(self))
-    }
-}
+impl ImmutableValue for bool {}
 
 /// Define the bool type
 impl TypedValue for bool {
     fn get_type(&self) -> &'static str {
         "bool"
+    }
+
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
     }
 
     fn collect_repr(&self, s: &mut String) {
@@ -55,12 +55,6 @@ impl TypedValue for bool {
     }
     fn get_hash(&self) -> Result<u64, ValueError> {
         Ok(self.to_int().unwrap() as u64)
-    }
-
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(iter::empty())
     }
 
     fn equals(&self, other: &Value) -> Result<bool, ValueError> {

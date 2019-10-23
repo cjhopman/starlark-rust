@@ -16,7 +16,7 @@
 
 use crate::syntax::errors::SyntaxError;
 use crate::values::error::*;
-use crate::values::Value;
+use crate::values::*;
 use codemap::Span;
 use codemap_diagnostic::{Diagnostic, Level, SpanLabel, SpanStyle};
 use std::convert::TryFrom;
@@ -349,6 +349,7 @@ mod test {
     use crate::values::Value;
     use std::collections::HashMap;
     use std::convert::TryFrom;
+    use super::*;
 
     #[test]
     fn test_string_interpolation() {

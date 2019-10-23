@@ -14,7 +14,7 @@
 
 //! Methods for the `list` type.
 
-use crate::values::list::List;
+use crate::values::list::*;
 use crate::values::none::NoneType;
 use crate::values::*;
 
@@ -48,7 +48,7 @@ starlark_module! {global =>
     /// # )"#).unwrap());
     /// ```
     list.append(this, #el) {
-        let mut this = this.downcast_mut::<List>()?.unwrap();
+        let mut this = this.as_list_mut()?.unwrap();
         this.push(el)?;
         Ok(Value::new(NoneType::None))
     }

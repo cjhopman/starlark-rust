@@ -74,6 +74,8 @@
 #![deny(intra_doc_link_resolution_failure)]
 #![allow(unused_imports)]
 #![feature(hash_set_entry)]
+#![feature(associated_type_defaults)]
+
 
 pub mod environment;
 #[doc(hidden)]

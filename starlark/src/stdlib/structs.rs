@@ -17,6 +17,7 @@
 use crate::small_map::SmallMap;
 use crate::values::error::ValueError;
 use crate::values::*;
+use std::any::Any;
 
 /// `struct()` implementation.
 #[derive(Clone)]
@@ -36,19 +37,44 @@ impl StarlarkStruct {
 
 impl From<StarlarkStruct> for Value {
     fn from(s: StarlarkStruct) -> Value {
-        MutableValue::make_mutable(s)
+        Value::make_mutable(s)
     }
 }
 
-impl MutableValue for StarlarkStruct {}
+impl CloneForCell for StarlarkStruct {
+    fn clone_for_cell(&self) -> Self {
+        unimplemented!()
+    }
+}
 
-impl TypedValueUtils for StarlarkStruct {
-    fn new_value(self) -> Value {
-        MutableValue::make_mutable(self)
+impl MutableValue for StarlarkStruct {
+    fn freeze(&self) -> Result<FrozenValue, ValueError> {
+        let mut frozen = SmallMap::new();
+
+        for (k, v) in &self.fields {
+            frozen.insert(k.to_string(), v.freeze()?);
+        }
+
+        // TODO
+        Ok(FrozenValue::make_none())
+        /*
+        return Ok(FrozenValue::new(StarlarkStruct {
+            bound: true,
+            fields: frozen,
+        }));
+        */
     }
 }
 
 impl TypedValue for StarlarkStruct {
+    fn naturally_mutable(&self) -> bool {
+        true
+    }
+
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
+    }
+
     fn to_json(&self) -> String {
         let mut s = "{".to_string();
         s += &self
@@ -59,32 +85,6 @@ impl TypedValue for StarlarkStruct {
             .join(", ");
         s += "}";
         s
-    }
-
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(self.fields.values().cloned())
-    }
-
-    fn bind(&self, vars: &mut dyn Binder) -> Result<FrozenValue, ValueError> {
-        if self.bound {
-            panic!()
-        }
-
-        // println!("binding struct");
-
-        let mut bound = SmallMap::new();
-
-        for (k, v) in &self.fields {
-            let b = v.bind(vars)?;
-            bound.insert(k.to_string(), b.into());
-        }
-
-        return Ok(FrozenValue::new(StarlarkStruct {
-            bound: true,
-            fields: bound,
-        }));
     }
 
     fn collect_repr(&self, r: &mut String) {
@@ -167,7 +167,7 @@ starlark_module! { global =>
     /// # )").unwrap());
     /// ```
     struct_(**kwargs) {
-        Ok(Value::new(StarlarkStruct {
+        Ok(Value::new_mutable(StarlarkStruct {
             bound: false,
             fields: kwargs
         }))

@@ -29,12 +29,6 @@ pub struct Dictionary {
     content: SmallMap<Value, Value>,
 }
 
-impl crate::small_map::SmallHash for Value {
-    fn get_hash(&self) -> u64 {
-        self.get_hash().unwrap()
-    }
-}
-
 impl Dictionary {
     pub fn from(map: SmallMap<Value, Value>) -> Dictionary {
         Dictionary { content: map }
@@ -45,7 +39,7 @@ impl Dictionary {
     }
 
     pub fn new() -> Value {
-        Value::new(Dictionary::new_typed())
+        Value::new_mutable(Dictionary::new_typed())
     }
 
     pub fn get_content(&self) -> &SmallMap<Value, Value> {
@@ -133,33 +127,29 @@ impl CloneForCell for Dictionary {
 
 impl From<Dictionary> for Value {
     fn from(d: Dictionary) -> Value {
-        MutableValue::make_mutable(d)
+        Value::make_mutable(d)
     }
 }
 
-impl TypedValueUtils for Dictionary {
-    fn new_value(self) -> Value {
-        MutableValue::make_mutable(self)
+impl MutableValue for Dictionary {   
+    fn freeze(&self) -> Result<FrozenValue, ValueError> { 
+        let mut frozen: SmallMap<FrozenValue, FrozenValue> = SmallMap::new();
+        for (k, v) in &self.content {
+            frozen.insert(k.freeze()?, v.freeze()?);
+        }
+        panic!()
+        // Ok(FrozenValue::make_immutable(Dictionary::from(frozen)))
     }
-
-    fn new_frozen(self) -> FrozenValue {
-        FrozenValue(FrozenInner::Object(Arc::new(self)))
-    }
-    
 }
 
-impl MutableValue for Dictionary {}
 /// Define the Dictionary type
 impl TypedValue for Dictionary {
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        // XXX: We cannot freeze the key because they are immutable in rust, is it important?
-        Box::new(
-            self.content
-                .iter()
-                .flat_map(|(k, v)| vec![k.clone(), v.clone()].into_iter()),
-        )
+    fn naturally_mutable(&self) -> bool {
+        true
+    }
+
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
     }
 
     fn collect_repr(&self, r: &mut String) {
@@ -279,7 +269,7 @@ impl<T1: Into<Value> + Eq + Hash + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
     type Error = ValueError;
 
     fn try_from(a: HashMap<T1, T2>) -> Result<Value, ValueError> {
-        Ok(Value::new(dict::Dictionary::try_from(a)?))
+        Ok(Value::new_mutable(dict::Dictionary::try_from(a)?))
     }
 }
 
@@ -289,7 +279,7 @@ impl<T1: Into<Value> + Eq + Hash + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
     type Error = ValueError;
 
     fn try_from(a: SmallMap<T1, T2>) -> Result<Value, ValueError> {
-        Ok(Value::new(dict::Dictionary::try_from(a)?))
+        Ok(Value::new_mutable(dict::Dictionary::try_from(a)?))
     }
 }
 

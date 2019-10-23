@@ -52,7 +52,7 @@ use starlark::syntax::dialect::Dialect;
 use starlark::syntax::lexer::{BufferedLexer, LexerIntoIter, LexerItem};
 use starlark::syntax::parser::parse_lexer;
 use starlark::values::none::NoneType;
-use starlark::values::Value;
+use starlark::values::*;
 use std::env;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

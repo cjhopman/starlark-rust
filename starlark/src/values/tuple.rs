@@ -26,7 +26,12 @@ pub struct Tuple {
     content: Vec<Value>,
 }
 
-pub(crate) fn slice_vector<'a, I: Iterator<Item = &'a Value>>(
+#[derive(Debug, Clone)]
+pub struct FrozenTuple {
+    content: Vec<FrozenValue>,
+}
+
+pub(crate) fn slice_vector<'a, V: ValueLike + 'static, I: Iterator<Item = &'a V>>(
     start: i64,
     stop: i64,
     stride: i64,
@@ -43,7 +48,7 @@ pub(crate) fn slice_vector<'a, I: Iterator<Item = &'a Value>>(
     let mut v: Vec<Value> = content
         .skip(low as usize)
         .take(take as usize)
-        .cloned()
+        .map(|e| e.clone_value())
         .collect();
     if stride < 0 {
         v.reverse();
@@ -58,6 +63,10 @@ pub(crate) fn slice_vector<'a, I: Iterator<Item = &'a Value>>(
             }
         })
         .collect()
+}
+
+impl CloneForCell for Tuple {
+    fn clone_for_cell(&self) -> Self { unimplemented!() }
 }
 
 impl Tuple {
@@ -254,20 +263,20 @@ impl<
 
 impl From<Tuple> for Value {
     fn from(t: Tuple) -> Value {
-        Value::make_immutable(t)
+        Value::new_mutable(t)
     }
 }
 
-impl TypedValueUtils for Tuple {}
+impl MutableValue for Tuple {
+    fn freeze(&self) -> Result<FrozenValue, ValueError> { unimplemented!() }
+}
 
-impl TypedValue for Tuple {
-    fn values_for_descendant_check_and_freeze<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = Value> + 'a> {
-        // Tuple are weird, immutable but with potentially mutable
-        Box::new(self.content.iter().cloned())
-    }
+trait TupleLike {
 
+}
+
+impl <T: TypedValueMulti<Outer=dyn TupleLike>> TypedValue for T  {
+    fn as_dyn_any(&self) -> &dyn Any { self }
     fn collect_repr(&self, s: &mut String) {
         s.push('(');
         let mut first = true;
@@ -374,7 +383,7 @@ impl TypedValue for Tuple {
     ) -> ValueResult {
         let (start, stop, stride) =
             Value::convert_slice_indices(self.length()?, start, stop, stride)?;
-        Ok(Value::new(Tuple::new(slice_vector(
+        Ok(Value::new_mutable(Tuple::new(slice_vector(
             start,
             stop,
             stride,
@@ -441,7 +450,7 @@ impl TypedValue for Tuple {
                 for _i in 0..*l {
                     result.content.extend(self.content.iter().cloned());
                 }
-                Ok(Value::new(result))
+                Ok(Value::new_mutable(result))
             }
             None => Err(ValueError::IncorrectParameterType),
         }
@@ -456,7 +465,7 @@ impl TypedIterable for Tuple {
 
 impl From<()> for Value {
     fn from(_a: ()) -> Value {
-        Value::new(Tuple::from(()))
+        Value::new_mutable(Tuple::from(()))
     }
 }
 
@@ -471,7 +480,7 @@ macro_rules! from_tuple {
     ($x: ty, $y: tt) => {
         impl<T: Into<Value> + Clone> From<$x> for Value {
             fn from(a: $x) -> Value {
-                Value::new($y::from(a))
+                Value::new_mutable($y::from(a))
             }
         }
     };
@@ -485,7 +494,7 @@ macro_rules! from_tuple {
     ($y: tt, $($x: tt),+) => {
         impl<$($x: Into<Value> + Clone),+> From<($($x),+)> for Value {
             fn from(a: ($($x),+)) -> Value {
-                Value::new($y::from(a))
+                Value::new_mutable($y::from(a))
             }
         }
 

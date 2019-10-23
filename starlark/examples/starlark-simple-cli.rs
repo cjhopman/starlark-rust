@@ -30,6 +30,7 @@ use codemap_diagnostic::{ColorConfig, Emitter};
 use starlark::eval::simple::eval;
 use starlark::stdlib::global_environment;
 use starlark::syntax::dialect::Dialect;
+use starlark::values::*;
 
 pub fn simple_evaluation(starlark_input: &String) -> Result<String, String> {
     // Create a new global environment populated with the stdlib.
