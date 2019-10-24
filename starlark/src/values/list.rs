@@ -19,16 +19,6 @@ use crate::values::iter::TypedIterable;
 use crate::values::*;
 use std::{cmp::Ordering, ops::Deref};
 
-#[derive(Clone, Default)]
-struct FrozenList {
-    content: Vec<FrozenValue>,
-}
-
-#[derive(Clone, Default)]
-pub struct List {
-    content: Vec<Value>,
-}
-
 impl<T: Into<Value>> From<Vec<T>> for List {
     fn from(a: Vec<T>) -> List {
         List {
@@ -62,16 +52,12 @@ impl From<FrozenList> for Value {
 }
 
 #[derive(Clone, Default)]
-struct ListGen<T : ValueLike> {
+pub struct ListGen<T : ValueLike> {
     content: Vec<T>,
 }
 
-
-
-impl ListGen<FrozenValue> {
-
-}
-
+pub type List = ListGen<Value>;
+pub type FrozenList = ListGen<FrozenValue>;
 
 pub trait ListBase {
     type Item: ValueLike;
@@ -86,21 +72,13 @@ pub trait ListLike {
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a>;
 }
 
-impl ListLike for FrozenList {
+impl <T: ValueLike> ListLike for ListGen<T> {
     fn len(&self) -> usize {
-        self.content().len()
+        self.content.len()
     }
-    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(self.content().iter().map(|e| Value::from_frozen(e.clone())))
-    }
-}
 
-impl ListLike for List {
-    fn len(&self) -> usize {
-        unimplemented!()
-    }
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(self.content().iter().cloned())
+        Box::new(self.content.iter().map(|e| e.clone_value()))
     }
 }
 
@@ -109,11 +87,11 @@ pub trait ValueAsList {
 }
 
 pub trait ValueAsListMut {
-    fn as_list_mut(&self) -> Result<Option<VRefMut<List>>, ValueError>;
+    fn as_list_mut(&mut self) -> Result<Option<VRefMut<List>>, ValueError>;
 }
 
 impl ValueAsListMut for Value {
-    fn as_list_mut(&self) -> Result<Option<VRefMut<List>>, ValueError> {
+    fn as_list_mut(&mut self) -> Result<Option<VRefMut<List>>, ValueError> {
         self.downcast_mut::<List>()
     }
 }
@@ -126,6 +104,46 @@ impl<T: ValueLike> ValueAsList for T {
                 self.downcast_ref::<List>()
                     .map(|o| VRef::map(o, |e| e as &dyn ListLike))
             })
+    }
+}
+
+impl ListBase for List {
+    type Item = Value;
+    fn content(&self) -> &Vec<Self::Item> {
+        &self.content
+    }
+
+    fn content_mut(&mut self) -> &mut Vec<Value> {
+        &mut self.content
+    }
+}
+
+impl MutableValue for List {
+    fn freeze(&self) -> Result<FrozenValue, ValueError> {
+        let mut frozen = Vec::new();
+        for v in self.content() {
+            frozen.push(v.freeze()?)
+        }
+        Ok(FrozenValue::from(frozen))
+    }
+    fn as_dyn_any_mut(&mut self) -> &mut dyn Any { self }
+}
+
+impl ImmutableValue for FrozenList {
+    fn as_owned_value(&self) -> Box<dyn MutableValue> {
+        let vals: Vec<_> = self.content.iter().map(|e| e.shared()).collect();
+        Box::new(List{ content: vals })
+    }    
+}
+
+impl ListBase for FrozenList {
+    type Item = FrozenValue;
+    fn content(&self) -> &Vec<Self::Item> {
+        &self.content
+    }
+
+    fn content_mut(&mut self) -> &mut Vec<Value> {
+        panic!()
     }
 }
 
@@ -184,54 +202,9 @@ impl List {
         self.content.remove(position);
         Ok(())
     }
-
-    pub fn remove_at(&mut self, index: usize) -> Value {
-        self.content.remove(index)
-    }
 }
 
-impl CloneForCell for List {
-    fn clone_for_cell(&self) -> Self {
-        let vals: Vec<_> = self.content.iter().map(|e| e.shared()).collect();
-        Self { content: vals }
-    }
-}
-
-
-impl ListBase for List {
-    type Item = Value;
-    fn content(&self) -> &Vec<Self::Item> {
-        &self.content
-    }
-    fn content_mut(&mut self) -> &mut Vec<Value> {
-        &mut self.content
-    }
-}
-
-impl MutableValue for List {
-    fn freeze(&self) -> Result<FrozenValue, ValueError> {
-        let mut frozen = Vec::new();
-        for v in self.content() {
-            frozen.push(v.freeze()?)
-        }
-        Ok(FrozenValue::from(frozen))
-    }
-}
-
-impl ImmutableValue for FrozenList {}
-
-impl ListBase for FrozenList {
-    type Item = FrozenValue;
-    fn content(&self) -> &Vec<Self::Item> {
-        &self.content
-    }
-
-    fn content_mut(&mut self) -> &mut Vec<Value> {
-        panic!()
-    }
-}
-
-impl<T: ListBase + TypedValueMulti<Outer=dyn ListLike> + 'static> TypedValue for T {
+impl<T : ValueLike + 'static> TypedValue for ListGen<T> where ListGen<T> : ListBase<Item=T> {
     fn naturally_mutable(&self) -> bool {
         true
     }

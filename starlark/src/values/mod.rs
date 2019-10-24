@@ -102,65 +102,21 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 pub use crate::eval::EvalResult;
-pub use mutability::CloneForCell;
-pub use mutability::ImmutableCell;
-pub use mutability::MutableCell;
-pub use mutability::{VRef, VRefMut};
+pub use mutability::*;
 
 pub use crate::small_map::SmallMap;
 
-trait Mutable {
-    fn val_ref(&self) -> VRef<dyn TypedValue>;
-    fn imm_ref(&self) -> &dyn TypedValue;
-    fn val_mut(&self) -> Result<VRefMut<dyn MutableValue>, ValueError>;
-    fn shared(&self) -> Value;
-    fn freeze(&self) -> Result<FrozenValue, ValueError>;
-    fn freeze_for_iteration(&self);
-    fn unfreeze_for_iteration(&self);
-}
-
-impl<T: MutableValue + CloneForCell> Mutable for MutableCell<T> {
-    fn imm_ref(&self) -> &dyn TypedValue {
-        panic!("can't get immutable ref to mutable cell")
-    }
-
-    fn val_ref(&self) -> VRef<dyn TypedValue> {
-        VRef::map(self.borrow(), |e: &T| e as &dyn TypedValue)
-    }
-
-    fn val_mut(&self) -> Result<VRefMut<dyn MutableValue>, ValueError> {
-        self.test_mut()?;
-        Ok(VRefMut::map(self.borrow_mut(), |e: &mut T| {
-            e as &mut dyn MutableValue
-        }))
-    }
-
-    fn shared(&self) -> Value {
-        Value(LocalInner::Mutable(Rc::new(ContentCell::shared(self))))
-    }
-
-    fn freeze(&self) -> Result<FrozenValue, ValueError> {
-        self.val_mut()?.freeze()
-    }
-
-    fn freeze_for_iteration(&self) {
-        ContentCell::freeze_for_iteration(self)
-    }
-
-    fn unfreeze_for_iteration(&self) {
-        ContentCell::unfreeze_for_iteration(self)
-    }
-}
-
-impl crate::small_map::SmallHash for Value {
+impl SmallHash for Value {
     fn get_small_hash(&self) -> u64 {
         self.val_ref().get_hash().unwrap()
     }
 }
 
-impl crate::small_map::SmallHash for FrozenValue {
+impl SmallHash for FrozenValue {
     fn get_small_hash(&self) -> u64 {
-        self.val_ref().get_hash().unwrap()
+        self.val_ref()
+            .get_hash()
+            .expect(&format!("couldn't hash {:?}", self))
     }
 }
 
@@ -180,6 +136,7 @@ enum FrozenInner {
 #[derive(Clone)]
 enum LocalInner {
     Immutable(FrozenValue),
+    Pseudo(Rc<dyn MutableValue>),
     Mutable(Rc<dyn Mutable>),
 }
 
@@ -188,27 +145,28 @@ impl LocalInner {
         match self {
             LocalInner::Immutable(v) => Ok(v.clone()),
             LocalInner::Mutable(v) => v.freeze(),
+            LocalInner::Pseudo(v) => v.freeze(),
         }
     }
 
-    pub fn freeze_for_iteration(&self) {
+    pub fn freeze_for_iteration(&self) -> Result<(), ValueError> {
         match self {
-            LocalInner::Immutable(..) => {}
             LocalInner::Mutable(v) => v.freeze_for_iteration(),
+            _ => Ok(()),
         }
     }
 
-    pub fn unfreeze_for_iteration(&self) {
+    pub fn unfreeze_for_iteration(&self) -> Result<(), ValueError> {
         match self {
-            LocalInner::Immutable(..) => {}
             LocalInner::Mutable(v) => v.unfreeze_for_iteration(),
+            _ => Ok(()),
         }
     }
 
     pub fn shared(&self) -> Value {
         match self {
-            LocalInner::Mutable(r) => r.shared(),
             LocalInner::Immutable(r) => r.shared(),
+            _ => panic!(),
         }
     }
 }
@@ -218,17 +176,15 @@ pub struct FrozenValue(FrozenInner);
 
 impl FrozenValue {
     pub fn shared(&self) -> Value {
-        if self.naturally_mutable() {
-            unimplemented!()
-        } else {
-            self.clone().into()
-        }
-    }
-
-    fn naturally_mutable(&self) -> bool {
         match &self.0 {
-            FrozenInner::Object(o) => o.naturally_mutable(),
-            _ => false,
+            FrozenInner::Object(o) => {
+                if o.naturally_mutable() {
+                    Value(LocalInner::Mutable(Rc::new(MutableCell::new_shared(o.clone()))))
+                } else {
+                    self.clone().into()
+                }
+            }
+            _ => self.clone().into(),
         }
     }
 
@@ -284,9 +240,6 @@ impl PartialEq for FrozenValue {
 }
 impl Eq for FrozenValue {}
 
-unsafe impl Send for FrozenValue {}
-unsafe impl Sync for FrozenValue {}
-
 pub trait Binder {
     fn get(&mut self, name: &str) -> Result<Option<Value>, ValueError>;
 }
@@ -323,7 +276,7 @@ impl Value {
     pub fn as_frozen(&self) -> FrozenValue {
         match &self.0 {
             LocalInner::Immutable(frozen) => frozen.clone(),
-            LocalInner::Mutable(_mutable) => panic!("not frozen"),
+            _ => panic!("not frozen"),
         }
     }
 
@@ -331,7 +284,7 @@ impl Value {
         FrozenValue::make_immutable(t).into()
     }
 
-    pub fn new_mutable<T: MutableValue + CloneForCell>(t: T) -> Value {
+    pub fn new_mutable<T: MutableValue>(t: T) -> Value {
         Value::make_mutable(t)
     }
 
@@ -339,7 +292,12 @@ impl Value {
         v.into()
     }
 
-    pub fn make_mutable<T: MutableValue + CloneForCell>(val: T) -> Value {
+    pub fn make_pseudo<T: MutableValue>(val: T) -> Value {
+        assert!(val.naturally_mutable());
+        Value(LocalInner::Pseudo(Rc::new(val)))
+    }
+
+    pub fn make_mutable<T: MutableValue>(val: T) -> Value {
         assert!(val.naturally_mutable());
         let holder = MutableCell::new(val);
         Value(LocalInner::Mutable(Rc::new(holder)))
@@ -353,12 +311,14 @@ impl Value {
         match &self.0 {
             LocalInner::Immutable(_inner) => Err(ValueError::CannotMutateImmutableValue),
             LocalInner::Mutable(inner) => inner.val_mut(),
+            _ => panic!(),
         }
     }
 
     pub fn imm_ref(&self) -> &dyn TypedValue {
         match &self.0 {
             LocalInner::Immutable(inner) => inner.imm_ref(),
+            LocalInner::Pseudo(inner) => inner.as_typed_value(),
             LocalInner::Mutable(inner) => inner.imm_ref(),
         }
     }
@@ -397,7 +357,18 @@ impl ValueLike for Value {
     fn val_ref(&self) -> VRef<dyn TypedValue> {
         match &self.0 {
             LocalInner::Immutable(inner) => inner.val_ref(),
+            LocalInner::Pseudo(inner) => VRef::Ptr(inner.as_typed_value()),
             LocalInner::Mutable(inner) => inner.val_ref(),
+        }
+    }
+
+    fn as_any_mut(&mut self) -> Result<Option<VRefMut<'_, dyn Any>>, ValueError> {
+        match self.val_mut() {
+            Result::Ok(vref) => {
+                let dynany: VRefMut<'_, dyn Any> = VRefMut::map(vref, |v| v.as_dyn_any_mut());
+                Ok(Some(dynany))
+            }
+            Result::Err(e) => Err(e),
         }
     }
 
@@ -444,9 +415,16 @@ pub trait TypedValueMulti {
 
 pub trait MutableValue: TypedValue {
     fn freeze(&self) -> Result<FrozenValue, ValueError>;
+
+    fn as_dyn_any_mut(&mut self) -> &mut dyn Any;
 }
 
-pub trait ImmutableValue: TypedValue + Send + Sync {}
+pub trait ImmutableValue: TypedValue + Send + Sync {
+    fn as_owned_value(&self) -> Box<dyn MutableValue> {
+        assert!(!self.naturally_mutable());
+        unimplemented!()
+    }
+}
 
 impl<T: TypedValue> AsTypedValue for T {
     fn as_typed_value(&self) -> &dyn TypedValue {
@@ -883,7 +861,7 @@ impl fmt::Debug for FrozenValue {
     }
 }
 
-pub trait DowncastValue : ValueLike {
+pub trait DowncastValue: ValueLike {
     /// Get a reference to underlying data or `None`
     /// if contained object has different type than requested.
     ///
@@ -898,18 +876,32 @@ pub trait DowncastValue : ValueLike {
     }
 }
 
-impl <T: ValueLike> DowncastValue for T {}
+impl<T: ValueLike> DowncastValue for T {}
 
-pub trait ValueLike {
+impl indexmap::Equivalent<Value> for FrozenValue {
+    fn equivalent(&self, key: &Value) -> bool {
+        self.equals(key).unwrap()
+    }
+}
+
+impl indexmap::Equivalent<FrozenValue> for Value {
+    fn equivalent(&self, key: &FrozenValue) -> bool {
+        key.equals(self).unwrap()
+    }
+}
+
+pub trait ValueLike:
+    Eq + SmallHash + indexmap::Equivalent<Value> + indexmap::Equivalent<FrozenValue>
+{
     fn clone_value(&self) -> Value;
 
-    fn val_ref(&self) -> VRef<dyn TypedValue>;    
+    fn val_ref(&self) -> VRef<dyn TypedValue>;
 
     fn as_any_ref(&self) -> VRef<'_, dyn Any> {
         VRef::map(self.val_ref(), |e| e.as_dyn_any())
     }
 
-    fn as_any_mut(&self) -> Result<Option<VRefMut<'_, dyn Any>>, ValueError> {
+    fn as_any_mut(&mut self) -> Result<Option<VRefMut<'_, dyn Any>>, ValueError> {
         unimplemented!()
     }
 
@@ -1030,10 +1022,10 @@ impl Value {
     pub fn freeze(&self) -> Result<FrozenValue, ValueError> {
         self.0.freeze()
     }
-    pub fn freeze_for_iteration(&mut self) {
+    pub fn freeze_for_iteration(&mut self) -> Result<(), ValueError> {
         self.0.freeze_for_iteration()
     }
-    pub fn unfreeze_for_iteration(&mut self) {
+    pub fn unfreeze_for_iteration(&mut self) -> Result<(), ValueError> {
         self.0.unfreeze_for_iteration()
     }
     pub fn to_str(&self) -> String {
@@ -1053,7 +1045,7 @@ impl Value {
     }
 
     pub fn is_descendant(&self, other: DataPtr) -> bool {
-        unimplemented!()
+        false
         // self.val_ref().is_descendant(other)
     }
 
@@ -1249,7 +1241,7 @@ impl Value {
     /// This function panics if the `Value` is borrowed.
     ///
     /// Error is returned if the value is frozen or frozen for iteration.
-    pub fn downcast_mut<T: TypedValue>(&self) -> Result<Option<RefMut<'_, T>>, ValueError> {
+    pub fn downcast_mut<T: TypedValue>(&mut self) -> Result<Option<RefMut<'_, T>>, ValueError> {
         let any = match self.as_any_mut()? {
             Some(any) => any,
             None => return Ok(None),
@@ -1278,7 +1270,7 @@ pub mod range;
 pub mod string;
 pub mod tuple;
 
-use crate::values::mutability::{ContentCell, RefOrRef};
+use crate::values::mutability::RefOrRef;
 use crate::values::none::NoneType;
 
 #[cfg(test)]

@@ -20,17 +20,6 @@ use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 
-/// A starlark tuple
-#[derive(Debug, Clone)]
-pub struct Tuple {
-    content: Vec<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct FrozenTuple {
-    content: Vec<FrozenValue>,
-}
-
 pub(crate) fn slice_vector<'a, V: ValueLike + 'static, I: Iterator<Item = &'a V>>(
     start: i64,
     stop: i64,
@@ -63,10 +52,6 @@ pub(crate) fn slice_vector<'a, V: ValueLike + 'static, I: Iterator<Item = &'a V>
             }
         })
         .collect()
-}
-
-impl CloneForCell for Tuple {
-    fn clone_for_cell(&self) -> Self { unimplemented!() }
 }
 
 impl Tuple {
@@ -267,15 +252,85 @@ impl From<Tuple> for Value {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct TupleGen<T : ValueLike> {
+    content: Vec<T>,
+}
+
+pub type Tuple = TupleGen<Value>;
+pub type FrozenTuple = TupleGen<FrozenValue>;
+
+pub trait TupleLike {
+    fn len(&self) -> usize;
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a>;
+}
+
+impl <T: ValueLike> TupleGen<T> {
+    fn content(&self) -> &Vec<T> {
+        &self.content
+    }
+}
+
+impl <T: ValueLike> TupleLike for TupleGen<T> {
+    fn len(&self) -> usize {
+        self.content.len()
+    }
+
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
+        Box::new(self.content.iter().map(|e| e.clone_value()))
+    }
+}
+
 impl MutableValue for Tuple {
-    fn freeze(&self) -> Result<FrozenValue, ValueError> { unimplemented!() }
+    fn freeze(&self) -> Result<FrozenValue, ValueError> {
+        let mut frozen = Vec::new();
+        for v in self.content() {
+            frozen.push(v.freeze()?)
+        }
+        Ok(FrozenValue::make_immutable(FrozenTuple{content:frozen}))
+    }
+    fn as_dyn_any_mut(&mut self) -> &mut dyn Any { self }
 }
 
-trait TupleLike {
-
+impl ImmutableValue for FrozenTuple {
+    fn as_owned_value(&self) -> Box<dyn MutableValue> {
+        let vals: Vec<_> = self.content.iter().map(|e| e.shared()).collect();
+        Box::new(Tuple { content: vals })
+    }
 }
 
-impl <T: TypedValueMulti<Outer=dyn TupleLike>> TypedValue for T  {
+
+pub trait ValueAsTuple {
+    fn as_tuple(&self) -> Option<VRef<dyn TupleLike>>;
+}
+
+pub trait ValueAsTupleMut {
+    fn as_tuple_mut(&mut self) -> Result<Option<VRefMut<Tuple>>, ValueError>;
+}
+
+impl ValueAsTupleMut for Value {
+    fn as_tuple_mut(&mut self) -> Result<Option<VRefMut<Tuple>>, ValueError> {
+        self.downcast_mut::<Tuple>()
+    }
+}
+
+impl<T: ValueLike> ValueAsTuple for T {
+    fn as_tuple(&self) -> Option<VRef<dyn TupleLike>> {
+        self.downcast_ref::<FrozenTuple>()
+            .map(|o| VRef::map(o, |e| e as &dyn TupleLike))
+            .or_else(|| {
+                self.downcast_ref::<Tuple>()
+                    .map(|o| VRef::map(o, |e| e as &dyn TupleLike))
+            })
+    }
+}
+
+
+impl<T : ValueLike + 'static> TypedValue for TupleGen<T> {
+    fn naturally_mutable(&self) -> bool {
+        true
+    }
+
     fn as_dyn_any(&self) -> &dyn Any { self }
     fn collect_repr(&self, s: &mut String) {
         s.push('(');
@@ -309,18 +364,18 @@ impl <T: TypedValueMulti<Outer=dyn TupleLike>> TypedValue for T  {
     }
 
     fn equals(&self, other: &Value) -> Result<bool, ValueError> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            if self.content.len() != other.content.len() {
+        if let Some(other) = other.as_tuple() {
+            if self.content.len() != other.len() {
                 return Ok(false);
             }
 
-            let mut self_iter = self.content.iter();
-            let mut other_iter = other.content.iter();
+            let mut self_iter = TupleLike::iter(self);
+            let mut other_iter = other.iter();
 
             loop {
                 match (self_iter.next(), other_iter.next()) {
                     (Some(a), Some(b)) => {
-                        if !a.equals(b)? {
+                        if !a.equals(&b)? {
                             return Ok(false);
                         }
                     }
@@ -336,9 +391,9 @@ impl <T: TypedValueMulti<Outer=dyn TupleLike>> TypedValue for T  {
     }
 
     fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
-        if let Some(other) = other.downcast_ref::<Self>() {
+        if let Some(other) = other.as_tuple() {
             let mut iter1 = self.content.iter();
-            let mut iter2 = other.content.iter();
+            let mut iter2 = other.iter();
             loop {
                 match (iter1.next(), iter2.next()) {
                     (None, None) => return Ok(Ordering::Equal),
@@ -359,7 +414,7 @@ impl <T: TypedValueMulti<Outer=dyn TupleLike>> TypedValue for T  {
 
     fn at(&self, index: Value) -> ValueResult {
         let i = index.convert_index(self.length()?)? as usize;
-        Ok(self.content[i].clone())
+        Ok(self.content[i].clone_value())
     }
 
     fn length(&self) -> Result<i64, ValueError> {
@@ -410,14 +465,14 @@ impl <T: TypedValueMulti<Outer=dyn TupleLike>> TypedValue for T  {
     /// # );
     /// ```
     fn add(&self, other: &Value) -> Result<Value, ValueError> {
-        if let Some(other) = other.downcast_ref::<Self>() {
+        if let Some(other) = other.as_tuple() {
             let mut result = Tuple {
-                content: Vec::with_capacity(self.content.len() + other.content.len()),
+                content: Vec::with_capacity(self.content.len() + other.len()),
             };
-            for x in &self.content {
+            for x in TupleLike::iter(self) {
                 result.content.push(x.clone());
             }
-            for x in &other.content {
+            for x in other.iter() {
                 result.content.push(x.clone());
             }
             Ok(result.into())
@@ -448,7 +503,7 @@ impl <T: TypedValueMulti<Outer=dyn TupleLike>> TypedValue for T  {
                     content: Vec::new(),
                 };
                 for _i in 0..*l {
-                    result.content.extend(self.content.iter().cloned());
+                    result.content.extend(self.content.iter().map(|e| e.clone_value()));
                 }
                 Ok(Value::new_mutable(result))
             }
@@ -457,9 +512,9 @@ impl <T: TypedValueMulti<Outer=dyn TupleLike>> TypedValue for T  {
     }
 }
 
-impl TypedIterable for Tuple {
+impl <T: ValueLike + 'static> TypedIterable for TupleGen<T> {
     fn to_iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(self.content.iter().cloned())
+        TupleLike::iter(self)
     }
 }
 

@@ -17,19 +17,13 @@
 use crate::small_map::SmallMap;
 use crate::values::error::ValueError;
 use crate::values::*;
-use std::any::Any;
+use std::{ rc::Rc, any::Any};
 
 /// `struct()` implementation.
-#[derive(Clone)]
-pub struct StarlarkStruct {
-    bound: bool,
-    pub fields: SmallMap<String, Value>,
-}
 
 impl StarlarkStruct {
     pub fn new(fields: SmallMap<String, Value>) -> Self {
         Self {
-            bound: false,
             fields,
         }
     }
@@ -41,9 +35,39 @@ impl From<StarlarkStruct> for Value {
     }
 }
 
-impl CloneForCell for StarlarkStruct {
-    fn clone_for_cell(&self) -> Self {
-        unimplemented!()
+#[derive(Clone, Default)]
+pub struct StarlarkStructGen<T: ValueLike> {
+    pub fields: SmallMap<String, T>,
+}
+
+pub type StarlarkStruct = StarlarkStructGen<Value>;
+pub type FrozenStarlarkStruct = StarlarkStructGen<FrozenValue>;
+
+pub trait StarlarkStructLike : TypedValue {
+    fn len(&self) -> usize;
+    fn get_field(&self, name: &str) -> Option<Value>;
+}
+
+pub trait StarlarkStructMut {
+    fn fields_mut(&mut self) -> &mut SmallMap<String, Value>;
+}
+
+impl StarlarkStructMut for StarlarkStruct {
+    fn fields_mut(&mut self) -> &mut SmallMap<String, Value> {
+        &mut self.fields
+    }
+}
+
+impl StarlarkStructMut for FrozenStarlarkStruct {
+    fn fields_mut(&mut self) -> &mut SmallMap<String, Value> {
+        panic!()
+    }
+}
+
+impl<T: ValueLike + 'static> StarlarkStructLike for StarlarkStructGen<T> where StarlarkStructGen<T> : StarlarkStructMut {
+    fn len(&self) -> usize { self.fields.len() }
+    fn get_field(&self, name: &str) -> Option<Value> {
+        self.fields.get(name).map(|e| e.clone_value())
     }
 }
 
@@ -56,7 +80,7 @@ impl MutableValue for StarlarkStruct {
         }
 
         // TODO
-        Ok(FrozenValue::make_none())
+        Ok(FrozenValue::make_immutable(FrozenStarlarkStruct{fields: frozen}))
         /*
         return Ok(FrozenValue::new(StarlarkStruct {
             bound: true,
@@ -64,9 +88,48 @@ impl MutableValue for StarlarkStruct {
         }));
         */
     }
+    fn as_dyn_any_mut(&mut self) -> &mut dyn Any { self }
 }
 
-impl TypedValue for StarlarkStruct {
+impl ImmutableValue for FrozenStarlarkStruct {
+    fn as_owned_value(&self) -> Box<dyn MutableValue> {
+        let mut items = SmallMap::with_capacity(self.fields.len());
+        for (k, v) in &self.fields {
+            items.insert(k.to_string(), v.shared());
+        }
+        Box::new(StarlarkStruct{ fields: items })
+    }
+}
+
+pub trait ValueAsStarlarkStruct {
+    fn as_struct(&self) -> Option<VRef<dyn StarlarkStructLike>>;
+}
+
+pub trait ValueAsStarlarkStructMut {
+    fn as_struct_mut(&mut self) -> Result<Option<VRefMut<StarlarkStruct>>, ValueError>;
+}
+
+impl ValueAsStarlarkStructMut for Value {
+    fn as_struct_mut(&mut self) -> Result<Option<VRefMut<StarlarkStruct>>, ValueError> {
+        self.downcast_mut::<StarlarkStruct>()
+    }
+}
+
+impl<T: ValueLike> ValueAsStarlarkStruct for T {
+    fn as_struct(&self) -> Option<VRef<dyn StarlarkStructLike>> {
+        self.downcast_ref::<FrozenStarlarkStruct>()
+            .map(|o| VRef::map(o, |e| e as &dyn StarlarkStructLike))
+            .or_else(|| {
+                self.downcast_ref::<StarlarkStruct>()
+                    .map(|o| VRef::map(o, |e| e as &dyn StarlarkStructLike))
+            })
+    }
+}
+
+impl<T: ValueLike + 'static> TypedValue for StarlarkStructGen<T>
+where
+    StarlarkStructGen<T>: StarlarkStructMut,
+{
     fn naturally_mutable(&self) -> bool {
         true
     }
@@ -104,16 +167,16 @@ impl TypedValue for StarlarkStruct {
         "struct"
     }
     fn equals(&self, other: &Value) -> Result<bool, ValueError> {
-        if let Some(ref other) = other.downcast_ref::<StarlarkStruct>() {
-            if self.fields.len() != other.fields.len() {
+        if let Some(ref other) = other.as_struct() {
+            if self.fields.len() != other.len() {
                 return Ok(false);
             }
 
             for (field, a) in &self.fields {
-                match other.fields.get(field) {
+                match other.get_field(field) {
                     None => return Ok(false),
                     Some(b) => {
-                        if !a.equals(b)? {
+                        if !a.equals(&b)? {
                             return Ok(false);
                         }
                     }
@@ -128,7 +191,7 @@ impl TypedValue for StarlarkStruct {
 
     fn get_attr(&self, attribute: &str) -> Result<Value, ValueError> {
         match self.fields.get(attribute) {
-            Some(v) => Ok(v.clone()),
+            Some(v) => Ok(v.clone_value()),
             None => Err(ValueError::OperationNotSupported {
                 op: attribute.to_owned(),
                 left: self.to_repr_slow(),
@@ -168,13 +231,12 @@ starlark_module! { global =>
     /// ```
     struct_(**kwargs) {
         Ok(Value::new_mutable(StarlarkStruct {
-            bound: false,
             fields: kwargs
         }))
     }
 
     struct_.to_json(this) {
-        let this = this.downcast_ref::<StarlarkStruct>().unwrap();
+        let this = this.as_struct().unwrap();
         Ok(Value::new(this.to_json()))
     }
 }

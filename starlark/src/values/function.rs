@@ -230,12 +230,8 @@ impl From<FunctionError> for ValueError {
 
 impl WrappedMethod {
     pub fn new(self_obj: Value, method: Value) -> Value {
-        Value::new_mutable(WrappedMethod { method, self_obj })
+        Value::make_pseudo(WrappedMethod { method, self_obj })
     }
-}
-
-impl CloneForCell for WrappedMethod {
-    fn clone_for_cell(&self) -> Self { unimplemented!() }
 }
 
 impl FunctionType {
@@ -269,6 +265,7 @@ pub(crate) fn collect_repr(
 ) {
     let v: Vec<String> = signature
         .iter()
+        .take(6)
         .map(|x| -> String {
             match x {
                 FunctionParameter::Normal(ref name) => name.clone(),
@@ -608,9 +605,16 @@ pub(crate) struct WrappedMethod {
 
 impl MutableValue for WrappedMethod {
     fn freeze(&self) -> Result<FrozenValue, ValueError> { unimplemented!() }
+    fn as_dyn_any_mut(&mut self) -> &mut dyn Any { self }
 }
 
+
 impl TypedValue for WrappedMethod {
+
+    fn naturally_mutable(&self) -> bool {
+        true
+    }
+
     fn function_id(&self) -> Option<FunctionId> {
         Some(FunctionId(self.method.data_ptr()))
     }

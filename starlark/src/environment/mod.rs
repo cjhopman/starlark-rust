@@ -111,6 +111,10 @@ pub struct FrozenEnvironment {
     global: TypeValues,
 }
 
+trait Ensure : Send + Sync {}
+
+impl Ensure for FrozenEnvironment {}
+
 impl FrozenEnvironment {
     /// Create a new child environment for this environment
     pub fn child(&self, name: &str) -> LocalEnvironment {

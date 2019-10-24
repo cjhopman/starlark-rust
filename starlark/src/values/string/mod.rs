@@ -24,12 +24,6 @@ use std::hash::{Hash, Hasher};
 pub mod interpolation;
 use std::iter;
 
-impl CloneForCell for String {
-    fn clone_for_cell(&self) -> Self {
-        self.clone()
-    }
-}
-
 impl ImmutableValue for String {}
 
 impl TypedValue for String {

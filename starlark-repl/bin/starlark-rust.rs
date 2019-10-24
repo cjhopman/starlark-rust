@@ -117,17 +117,6 @@ pub struct Opt {
 
 use std;
 
-trait TV : TraitcastFrom {}
-
-trait L : TV {}
-
-struct ML {}
-
-traitcast::traitcast!(struct ML: TV, L);
-
-impl TV for ML {}
-impl L for ML {}
-
 type ValueMap = SmallMap<::std::string::String, starlark::values::FrozenValue>;
 
 type RuleRecorder = std::sync::Arc<std::sync::Mutex<SmallMap<String, ValueMap>>>;
@@ -324,6 +313,14 @@ mod buck {
     use regex::Regex;
 
     impl FileLoader for ParserFileLoader {
+        fn find_module(&self, name: &str) -> Result<FrozenEnvironment, EvalException> {
+            let lock = self.info.shared.map.lock().unwrap();
+            if lock.contains_key(name) {
+                return Ok(lock.get(name).unwrap().clone());
+            }
+            panic!()
+        }
+
         fn load(&self, path: &str) -> Result<FrozenEnvironment, EvalException> {
             lazy_static! {
                 static ref RE: Regex =
@@ -532,12 +529,6 @@ mod buck {
 use std::str::FromStr;
 
 fn main() {
-    {
-        let ml = ML{};
-        let tv : &dyn TV = &ml;
-        let cast : &dyn L = tv.cast_ref().unwrap();
-    }
-
     let opt = Opt::from_args();
 
     if let Some(d) = opt.dir {

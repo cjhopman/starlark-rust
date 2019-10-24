@@ -24,18 +24,13 @@ use std::convert::TryFrom;
 use std::hash::Hash;
 
 /// The Dictionary type
-#[derive(Default, Clone)]
-pub struct Dictionary {
-    content: SmallMap<Value, Value>,
-}
-
 impl Dictionary {
     pub fn from(map: SmallMap<Value, Value>) -> Dictionary {
         Dictionary { content: map }
     }
 
     pub fn new_typed() -> Dictionary {
-        Dictionary::default()
+        Dictionary { content: SmallMap::new()}
     }
 
     pub fn new() -> Value {
@@ -46,27 +41,12 @@ impl Dictionary {
         &self.content
     }
 
-    pub fn get(&self, key: &Value) -> Result<Option<&Value>, ValueError> {
-        Ok(self.content.get(key))
-    }
-
     pub fn clear(&mut self) {
         self.content.clear();
     }
 
     pub fn remove(&mut self, key: &Value) -> Result<Option<Value>, ValueError> {
         Ok(self.content.remove(key))
-    }
-
-    pub fn items(&self) -> Vec<(Value, Value)> {
-        self.content
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
-    }
-
-    pub fn values(&self) -> Vec<Value> {
-        self.content.values().cloned().collect()
     }
 
     /*
@@ -115,35 +95,125 @@ impl<T1: Into<Value> + Hash + Eq + Clone, T2: Into<Value> + Eq + Clone> TryFrom<
     }
 }
 
-impl CloneForCell for Dictionary {
-    fn clone_for_cell(&self) -> Self {
-        let mut items = SmallMap::with_capacity(self.content.len());
-        for (k, v) in &self.content {
-            items.insert(k.shared(), v.shared());
-        }
-        Self { content: items }
-    }
-}
-
 impl From<Dictionary> for Value {
     fn from(d: Dictionary) -> Value {
         Value::make_mutable(d)
     }
 }
 
-impl MutableValue for Dictionary {   
-    fn freeze(&self) -> Result<FrozenValue, ValueError> { 
-        let mut frozen: SmallMap<FrozenValue, FrozenValue> = SmallMap::new();
-        for (k, v) in &self.content {
-            frozen.insert(k.freeze()?, v.freeze()?);
-        }
-        panic!()
-        // Ok(FrozenValue::make_immutable(Dictionary::from(frozen)))
+impl From<SmallMap<FrozenValue, FrozenValue>> for FrozenValue {
+    fn from(content: SmallMap<FrozenValue, FrozenValue>) -> Self { 
+        FrozenValue::make_immutable(FrozenDictionary{content})
     }
 }
 
+
 /// Define the Dictionary type
-impl TypedValue for Dictionary {
+
+#[derive(Clone, Default)]
+pub struct DictionaryGen<T : ValueLike> {
+    content: SmallMap<T, T>,
+}
+
+pub type Dictionary = DictionaryGen<Value>;
+pub type FrozenDictionary = DictionaryGen<FrozenValue>;
+
+pub trait DictionaryLike {
+    fn len(&self) -> usize;
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = (Value, Value)> + 'a>;
+    fn values(&self) -> Vec<Value>;
+    fn items(&self) -> Vec<(Value, Value)>;
+}
+
+impl <T: ValueLike> DictionaryGen<T> {
+    pub fn get<Q>(&self, key: &Q) -> Result<Option<&T>, ValueError> where Q: indexmap::Equivalent<T> + SmallHash{
+        Ok(self.content.get(key))
+    }
+}
+
+pub trait DictionaryMut {
+    fn content_mut(&mut self) -> &mut SmallMap<Value, Value>;
+}
+
+impl DictionaryMut for Dictionary {
+    fn content_mut(&mut self) -> &mut SmallMap<Value, Value> { &mut self.content }
+}
+
+impl DictionaryMut for FrozenDictionary {
+    fn content_mut(&mut self) -> &mut SmallMap<Value, Value> { panic!() }
+}
+
+impl <T: ValueLike> DictionaryLike for DictionaryGen<T> {
+    fn len(&self) -> usize {
+        self.content.len()
+    }
+
+    fn items(&self) -> Vec<(Value, Value)> {
+        self.content
+            .iter()
+            .map(|(k, v)| (k.clone_value(), v.clone_value()))
+            .collect()
+    }
+
+    fn values(&self) -> Vec<Value> {
+        self.content.values().map(|e| e.clone_value()).collect()
+    }
+
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = (Value, Value)> + 'a> {
+        Box::new(self.content.iter().map(|(l, r)| (l.clone_value(), r.clone_value())))
+    }
+}
+
+impl MutableValue for Dictionary {
+    fn freeze(&self) -> Result<FrozenValue, ValueError> {
+        let mut frozen: SmallMap<FrozenValue, FrozenValue> = SmallMap::new();
+        for (k, v) in &self.content {
+            // println!("k: {:?} v: {:?}", k, v);
+            frozen.insert(k.freeze()?, v.freeze()?);
+        }
+        Ok(FrozenValue::from(frozen))
+    }
+    fn as_dyn_any_mut(&mut self) -> &mut dyn Any { self }
+}
+
+impl ImmutableValue for FrozenDictionary {
+    fn as_owned_value(&self) -> Box<dyn MutableValue> {
+        let mut items = SmallMap::with_capacity(self.content.len());
+        for (k, v) in &self.content {
+            items.insert(k.shared(), v.shared());
+        }
+        Box::new(Dictionary{ content: items })
+    }
+}
+
+
+pub trait ValueAsDictionary {
+    fn as_dict(&self) -> Option<VRef<dyn DictionaryLike>>;
+}
+
+pub trait ValueAsDictionaryMut {
+    fn as_dict_mut(&mut self) -> Result<Option<VRefMut<Dictionary>>, ValueError>;
+}
+
+impl ValueAsDictionaryMut for Value {
+    fn as_dict_mut(&mut self) -> Result<Option<VRefMut<Dictionary>>, ValueError> {
+        self.downcast_mut::<Dictionary>()
+    }
+}
+
+impl<T: ValueLike> ValueAsDictionary for T {
+    fn as_dict(&self) -> Option<VRef<dyn DictionaryLike>> {
+        self.downcast_ref::<FrozenDictionary>()
+            .map(|o| VRef::map(o, |e| e as &dyn DictionaryLike))
+            .or_else(|| {
+                self.downcast_ref::<Dictionary>()
+                    .map(|o| VRef::map(o, |e| e as &dyn DictionaryLike))
+            })
+    }
+}
+
+
+impl<T : ValueLike + 'static> TypedValue for DictionaryGen<T> where Value: indexmap::Equivalent<T>, DictionaryGen<T> : DictionaryMut {
     fn naturally_mutable(&self) -> bool {
         true
     }
@@ -188,16 +258,16 @@ impl TypedValue for Dictionary {
     }
 
     fn equals(&self, other: &Value) -> Result<bool, ValueError> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            if self.content.len() != other.content.len() {
+        if let Some(other) = other.as_dict() {
+            if self.content.len() != other.len() {
                 return Ok(false);
             }
 
-            for (k, v) in &self.content {
-                match other.content.get(k) {
+            for (k, v) in other.iter() {
+                match self.content.get(&k) {
                     None => return Ok(false),
                     Some(w) => {
-                        if !v.equals(w)? {
+                        if !w.equals(&v)? {
                             return Ok(false);
                         }
                     }
@@ -211,7 +281,7 @@ impl TypedValue for Dictionary {
 
     fn at(&self, index: Value) -> ValueResult {
         match self.content.get(&index) {
-            Some(v) => Ok(v.clone()),
+            Some(v) => Ok(v.clone_value()),
             None => Err(ValueError::KeyNotFound(index)),
         }
     }
@@ -231,25 +301,25 @@ impl TypedValue for Dictionary {
     fn set_at(&mut self, index: Value, new_value: Value) -> Result<(), ValueError> {
         let new_value = new_value.clone_for_container(self)?;
         {
-            if let Some(x) = self.content.get_mut(&index) {
+            if let Some(x) = self.content_mut().get_mut(&index) {
                 *x = new_value;
                 return Ok(());
             }
         }
-        self.content.insert(index, new_value);
+        self.content_mut().insert(index, new_value);
         Ok(())
     }
 
     fn add(&self, other: &Value) -> Result<Value, ValueError> {
-        if let Some(other) = other.downcast_ref::<Self>() {
+        if let Some(other) = other.as_dict() {
             let mut result = Dictionary {
                 content: SmallMap::new(),
             };
             for (k, v) in &self.content {
-                result.content.insert(k.clone(), v.clone());
+                result.content.insert(k.clone_value(), v.clone_value());
             }
-            for (k, v) in &other.content {
-                result.content.insert(k.clone(), v.clone());
+            for (k, v) in other.iter() {
+                result.content.insert(k, v);
             }
             return Ok(Value::from(result));
         }
@@ -257,9 +327,9 @@ impl TypedValue for Dictionary {
     }
 }
 
-impl TypedIterable for Dictionary {
+impl <T: ValueLike + 'static> TypedIterable for DictionaryGen<T> {
     fn to_iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
-        Box::new(self.content.iter().map(|x| x.0.clone()))
+        Box::new(self.content.iter().map(|x| x.0.clone_value()))
     }
 }
 

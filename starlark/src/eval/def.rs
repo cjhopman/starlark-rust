@@ -556,11 +556,11 @@ impl<'a> DefInvoker<'a> {
         );
 
         let module_env = context.module_env();
-        let captured_env = module_env.find_module(&self.module_name).unwrap();
+        let captured_env = context.find_module(&self.module_name);
 
         let mut ctx = EvaluationContext {
             call_stack: context.call_stack().to_owned(),
-            env: EvaluationContextEnvironment::Function(module_env, captured_env, locals),
+            env: context.function_context(captured_env, locals),
             type_values: context.type_values(),
             map: self.def.map.clone(),
         };

@@ -111,16 +111,12 @@ impl From<Set> for Value {
     }
 }
 
-impl CloneForCell for Set {
-    fn clone_for_cell(&self) -> Self {
-        unimplemented!("clone for set")
-    }
-}
-
 impl MutableValue for Set {
      fn freeze(&self) -> Result<FrozenValue, ValueError> {
          unimplemented!()
      }
+
+     fn as_dyn_any_mut(&mut self) -> &mut dyn Any { unimplemented!() }
 }
 
 impl TypedValue for Set {
@@ -300,7 +296,7 @@ mod tests {
     #[test]
     fn test_value_alias() {
         let v1 = Set::from(vec![1, 2]).unwrap();
-        let v2 = v1.clone();
+        let mut v2 = v1.clone();
         v2.downcast_mut::<Set>()
             .unwrap()
             .unwrap()

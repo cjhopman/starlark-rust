@@ -36,7 +36,7 @@ use crate::values::none::NoneType;
 use crate::values::*;
 use codemap::{CodeMap, Span, Spanned};
 use codemap_diagnostic::{Diagnostic, Level, SpanLabel, SpanStyle};
-use std::cell::RefCell;
+use std::{ ops::Deref, cell::RefCell};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -201,10 +201,14 @@ impl Into<Diagnostic> for EvalException {
 pub trait FileLoader: 'static {
     /// Open the file given by the load statement `path`.
     fn load(&self, path: &str) -> Result<FrozenEnvironment, EvalException>;
+
+    fn find_module(&self, name: &str) -> Result<FrozenEnvironment, EvalException> {
+        panic!()
+    }
 }
 
 /// Starlark `def` or comprehension local variables
-pub(crate) struct IndexedLocals<'a> {
+pub struct IndexedLocals<'a> {
     // name to index is needed for nested contexts only
     // (collection comprehensions).
     // TODO: access nested context objects by slot index too and drop this field
@@ -286,12 +290,27 @@ pub(crate) enum EvaluationContextEnvironment<'a> {
 
     /// Function-level
     Function(
-        &'a LocalEnvironment,
-        &'a FrozenEnvironment,
+        &'a EvaluationContextEnvironment<'a>,
+        CapturedEnv<'a>,
         IndexedLocals<'a>,
     ),
     /// Scope inside function, e. g. list comprenension
     Nested(&'a EvaluationContextEnvironment<'a>, IndexedLocals<'a>),
+}
+
+pub enum CapturedEnv<'a> {
+    Frozen(FrozenEnvironment),
+    Local(&'a LocalEnvironment),
+}
+
+impl<'a> Deref for CapturedEnv<'a> {
+    type Target = dyn Environment;
+    fn deref(&self) -> &Self::Target { 
+        match self {
+            CapturedEnv::Frozen(e) => e,
+            CapturedEnv::Local(e) => *e,
+        }
+     }
 }
 
 impl<'a> EvaluationContextEnvironment<'a> {
@@ -356,10 +375,25 @@ impl<'a> EvaluationContextEnvironment<'a> {
         }
     }
 
+
+    fn find_module(&self, name: &str) -> CapturedEnv {
+        match self {
+            EvaluationContextEnvironment::Module(env, loader) => {
+                if env.name() == name {
+                    CapturedEnv::Local(env)
+                } else {
+                    CapturedEnv::Frozen(loader.find_module(name).expect(&format!("can't find module {} when processing {}", name, env.name())))
+                }
+            },
+            EvaluationContextEnvironment::Function(env, _, _) => env.find_module(name),
+            EvaluationContextEnvironment::Nested(parent, _) => parent.find_module(name),
+        }
+    }
+
     fn module_env(&self) -> &LocalEnvironment {
         match self {
             EvaluationContextEnvironment::Module(env, _) => env,
-            EvaluationContextEnvironment::Function(env, _, _) => env,
+            EvaluationContextEnvironment::Function(env, _, _) => env.module_env(),
             EvaluationContextEnvironment::Nested(parent, _) => parent.module_env(),
         }
     }
@@ -411,6 +445,14 @@ impl<'a> EvaluationContext<'a> {
 
     pub fn module_env(&self) -> &LocalEnvironment {
         self.env.module_env()
+    }
+
+    pub fn find_module(&self, name: &str) -> CapturedEnv {
+        self.env.find_module(name)
+    }
+
+    pub(crate) fn function_context(&'a self, captured_env: CapturedEnv<'a>, locals: IndexedLocals<'a>) -> EvaluationContextEnvironment<'a> {
+        EvaluationContextEnvironment::Function(&self.env, captured_env, locals)
     }
 
     fn child(&'a self, name_to_index: &'a HashMap<String, usize>) -> EvaluationContext<'a> {

@@ -14,7 +14,7 @@
 
 //! Methods for the `dict` type.
 
-use crate::values::dict::Dictionary;
+use crate::values::dict::*;
 
 use crate::values::error::*;
 use crate::values::none::NoneType;
@@ -51,7 +51,7 @@ starlark_module! {global =>
     /// # (x == {})"#).unwrap());
     /// ```
     dict.clear(this) {
-        let mut this = this.downcast_mut::<Dictionary>()?.unwrap();
+        let mut this = this.as_dict_mut()?.unwrap();
         this.clear();
         Ok(Value::new(NoneType::None))
     }
@@ -105,7 +105,7 @@ starlark_module! {global =>
     /// # )"#).unwrap());
     /// ```
     dict.items(this) {
-        let this = this.downcast_ref::<Dictionary>().unwrap();
+        let this = this.as_dict().unwrap();
         ok!(this.items())
     }
 
@@ -163,7 +163,7 @@ starlark_module! {global =>
     /// x.pop("four")  # error: missing key
     /// ```
     dict.pop(this, #key, #default = NoneType::None) {
-        let mut this = this.downcast_mut::<Dictionary>()?.unwrap();
+        let mut this = this.as_dict_mut()?.unwrap();
         match this.remove(&key)? {
             Some(x) => Ok(x),
             None =>  Ok(default)
@@ -212,7 +212,7 @@ starlark_module! {global =>
     /// x.popitem()  # error: empty dict
     /// ```
     dict.popitem(this) {
-        let mut this = this.downcast_mut::<Dictionary>()?.unwrap();
+        let mut this = this.as_dict_mut()?.unwrap();
 
         let key = this.get_content().keys().nth(0).cloned();
         match key {
@@ -255,7 +255,7 @@ starlark_module! {global =>
     /// # )"#).unwrap());
     /// ```
     dict.setdefault(this, #key, #default = NoneType::None) {
-        let mut this = this.downcast_mut::<Dictionary>()?.unwrap();
+        let mut this = this.as_dict_mut()?.unwrap();
         if let Some(r) = this.get(&key)? {
             return Ok(r.clone())
         }
@@ -356,7 +356,7 @@ starlark_module! {global =>
     /// # )"#).unwrap());
     /// ```
     dict.values(this) {
-        let this = this.downcast_ref::<Dictionary>().unwrap();
+        let this = this.as_dict().unwrap();
         ok!(this.values())
     }
 }
