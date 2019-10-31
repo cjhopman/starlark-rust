@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /// Starlark language dialect.
-#[derive(Copy, Debug, Clone)]
+#[derive(Copy, Debug, Clone, Eq, PartialEq, Hash)]
 pub enum Dialect {
     // Build file dialect which is used to interpret Bazel's BUILD files
     Build,

@@ -190,6 +190,31 @@ pub fn parse_lexer<T1: Iterator<Item = LexerItem>, T2: LexerIntoIter<T1>>(
     }
 }
 
+pub fn find_loads(
+    ast: &AstStatement,
+) -> Vec<&str> {
+    let mut loads = Vec::new();
+    collect_loads(ast, &mut loads);
+    loads
+}
+
+fn collect_loads<'a>(
+    ast: &'a AstStatement,
+    vec: &mut Vec<&'a str>,
+) {
+    match ast.node {
+        Statement::Load(ref module, ..) => {
+            vec.push(&module.node)
+        }
+        Statement::Statements(ref stmts) => {
+            for s in stmts {
+                collect_loads(s, vec);
+            }
+        }
+        _ => {}        
+    }
+}
+
 /// Parse a build file (if build is true) or a starlark file provided as a content.
 ///
 /// # arguments

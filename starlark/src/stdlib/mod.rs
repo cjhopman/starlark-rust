@@ -234,12 +234,6 @@ starlark_module! {global_functions =>
     /// dict([(1, 2)], x=3) == {1: 2, 'x': 3}
     /// # )").unwrap());
     /// ```
-
-    glob(*args, **kwargs) {
-        let v : Vec<Value> = Vec::new();
-        Ok(Value::from(v))
-    }
-
     dict(?#a, **kwargs) {
         let mut map = Dictionary::new();
         if let Some(a) = a {

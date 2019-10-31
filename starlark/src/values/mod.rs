@@ -409,10 +409,6 @@ impl PartialEq for DataPtr {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionId(pub DataPtr);
 
-pub trait TypedValueMulti {
-    type Outer;
-}
-
 pub trait MutableValue: TypedValue {
     fn freeze(&self) -> Result<FrozenValue, ValueError>;
 

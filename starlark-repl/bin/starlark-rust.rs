@@ -23,9 +23,6 @@ extern crate starlark;
 #[macro_use]
 extern crate lazy_static;
 
-#[macro_use]
-extern crate traitcast;
-
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
 use starlark::environment::{Environment, FrozenEnvironment, GlobalEnvironment, GlobalEnvironmentBuilder, LocalEnvironment};
@@ -53,8 +50,6 @@ use starlark::values::error::*;
 use starlark::values::function::*;
 use starlark::values::none::*;
 use starlark::values::*;
-
-use traitcast::*;
 
 const EXIT_CODE_FAILURE: i32 = 2;
 

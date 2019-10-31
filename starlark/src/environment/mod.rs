@@ -111,7 +111,7 @@ pub struct FrozenEnvironment {
     global: TypeValues,
 }
 
-trait Ensure : Send + Sync {}
+trait Ensure: Send + Sync {}
 
 impl Ensure for FrozenEnvironment {}
 
@@ -310,7 +310,7 @@ impl LocalEnvironment {
         let mut frozen: HashMap<String, FrozenValue> = HashMap::new();
         for (k, v) in std::mem::replace(&mut self.env.variables, Default::default()) {
             frozen.insert(k, v.freeze()?);
-        }        
+        }
 
         Ok(FrozenEnvironment {
             env: Arc::new(EnvironmentContent {
@@ -407,6 +407,15 @@ impl TypeValues {
         }
     }
 
+    pub fn extend(&self, extend: HashMap<String, HashMap<String, FrozenValue>>) -> TypeValues {
+        Self::new(
+            extend
+                .into_iter()
+                .chain(self.type_objs.iter().map(|(k, v)| (k.clone(), v.clone())))
+                .collect(),
+        )
+    }
+
     pub fn get_type_value(&self, obj_type: &str, id: &str) -> Option<Value> {
         self.type_objs
             .get(obj_type)
@@ -416,7 +425,7 @@ impl TypeValues {
 
     /// List the attribute of a type
     pub fn list_type_value(&self, obj: &Value) -> Vec<String> {
-        if let Some(ref d) = self.type_objs.get(obj.get_type()){
+        if let Some(ref d) = self.type_objs.get(obj.get_type()) {
             let mut r = Vec::new();
             for k in d.keys() {
                 r.push(k.clone());
