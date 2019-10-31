@@ -107,7 +107,7 @@ macro_rules! starlark_parse_param_type {
         ::std::vec::Vec<$crate::values::Value>
     };
     (**) => {
-        crate::small_map::SmallMap<::std::string::String, $crate::values::Value>
+        $crate::small_map::SmallMap<::std::string::String, $crate::values::Value>
     };
 }
 
