@@ -1054,7 +1054,7 @@ impl Value {
     }
 
     pub fn iter<'a>(&'a self) -> Result<RefIterable<'a>, ValueError> {
-        Ok(RefIterable::new(VRef::map_err(self.val_ref(), |e| {
+        Ok(RefIterable::new(VRef::map(self.val_ref(), |e| {
             e.iter().unwrap()
         })))
     }
