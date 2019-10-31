@@ -1130,10 +1130,10 @@ starlark_module! {global =>
                 Some((v + 1) as usize)
             }
         };
-        let v : Vec<&str> =
+        let v : Vec<String> =
             if sep.get_type() == "NoneType" {
                 if maxsplit.is_none() {
-                    this.split_whitespace().collect()
+                    this.split_whitespace().map(|v| v.to_string()).collect()
                 } else {
                     ok!(splitn_whitespace(&this, maxsplit.unwrap()))
                 }
@@ -1141,9 +1141,9 @@ starlark_module! {global =>
                 check_string!(sep, split);
                 let sep = sep.to_str();
                 if maxsplit.is_none() {
-                    this.split(sep.as_str()).collect()
+                    this.split(sep.as_str()).map(|v| v.to_string()).collect()
                 } else {
-                    this.splitn(maxsplit.unwrap(), sep.as_str()).collect()
+                    this.splitn(maxsplit.unwrap(), sep.as_str()).map(|v| v.to_string()).collect()
                 }
             };
         ok!(v)
