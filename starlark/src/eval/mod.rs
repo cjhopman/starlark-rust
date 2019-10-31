@@ -563,7 +563,7 @@ fn eval_call<'a>(
     t(
         match res {
             Err(e) => {
-                println!("bt: {}", f.to_repr());
+                // println!("bt: {}", f.to_repr());
                 Err(e)
             }
             v => v,
