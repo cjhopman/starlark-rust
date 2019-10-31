@@ -15,6 +15,7 @@
 //! Methods for the `string` type.
 
 use crate::values::error::*;
+use crate::values::list::*;
 use crate::values::none::NoneType;
 use crate::values::*;
 use std::convert::TryFrom;
@@ -786,6 +787,7 @@ starlark_module! {global =>
     /// ```
     string.join(this: String, #to_join) {
         let mut r = String::new();
+        to_join.as_list().ok_or(ValueError::UnsupportedRecursiveDataStructure)?;
         let to_join_iter = to_join.iter()?;
         for (index, item) in to_join_iter.iter().enumerate() {
             if index != 0 {

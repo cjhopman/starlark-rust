@@ -54,24 +54,6 @@ impl<'a, T: ?Sized + 'a> RefOrRef<'a, T> {
             RefOrRef::Borrowed(p) => RefOrRef::Borrowed(Ref::map(p, f)),
         }
     }
-
-    /*
-        pub fn map_result<U: ?Sized, E : std::fmt::Debug, F>(orig: RefOrRef<'a, T>, f: F) -> Result<RefOrRef<'a, U>, E>
-        where
-            F: FnOnce(&T) -> Result<&U, E>,
-        {
-            match orig {
-                RefOrRef::Ptr(p) => Ok(RefOrRef::Ptr(f(p)?)),
-                RefOrRef::Borrowed(p) => {
-                    let r: Ref<Result<&U, E>> = Ref::map(p, f);
-                    match *r {
-                        Err(e) => Err(e),
-                        Ok(..) => Ok(RefOrRef::Borrowed(Ref::map(r, |e| e.unwrap()))),
-                    }
-                }
-            }
-        }
-    */
 }
 
 pub trait Mutable {
