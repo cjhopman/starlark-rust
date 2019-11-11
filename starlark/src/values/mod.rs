@@ -661,7 +661,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     ///
     /// __Note__: this does not handle native methods which are handled through universe.
     fn get_attr(&self, attribute: &str) -> ValueResult {
-        Err(unsupported!(self, ".{}", None))
+        Err(unsupported!(self, ".{}", attribute))
     }
 
     /// Return true if an attribute of name `attribute` exists for the current value.
@@ -986,7 +986,11 @@ pub trait ValueLike:
     }
 
     fn add(&self, other: Value) -> ValueResult {
-        self.val_ref().add(&other)
+        if let Some(..) = other.as_selector() {
+            Selector::added(self.clone_value(), other.clone())
+        } else {
+            self.val_ref().add(&other)
+        }
     }
 
     fn sub(&self, other: Value) -> ValueResult {
@@ -1265,8 +1269,10 @@ pub mod none;
 pub mod range;
 pub mod string;
 pub mod tuple;
+pub mod selector;
 
 use crate::values::mutability::RefOrRef;
+use crate::values::selector::*;
 use crate::values::none::NoneType;
 
 #[cfg(test)]

@@ -28,6 +28,8 @@ use crate::values::dict::Dictionary;
 use crate::values::function::WrappedMethod;
 use crate::values::none::NoneType;
 use crate::values::range::Range;
+use crate::values::selector::*;
+use crate::values::dict::*;
 use crate::values::*;
 
 // Errors -- CR = Critical Runtime
@@ -66,6 +68,9 @@ starlark_module! {global_functions =>
     }
 
 
+    select(d) {
+        Ok(Value::new_mutable(Selector::new(d)))
+    }
 
     /// [any](
     /// https://github.com/google/skylark/blob/a0e5de7e63b47e716cca7226662a4c95d47bf873/doc/spec.md#any
