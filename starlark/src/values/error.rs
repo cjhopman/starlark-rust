@@ -84,6 +84,7 @@ pub enum ValueError {
     UnsupportedRecursiveDataStructure,
     /// It is not allowed to mutate a structure during iteration.
     MutationDuringIteration,
+    IterationDuringMutation,
     /// A type was used which isn't supported with the current feature set. Wraps the type name.
     TypeNotSupported(String),
 }

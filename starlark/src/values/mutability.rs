@@ -138,7 +138,10 @@ pub struct FrozenState {
 
 impl FrozenState {
     fn new(inner: MutabilityState) -> Self {
-        Self{frozen: false, inner}
+        Self {
+            frozen: false,
+            inner,
+        }
     }
 
     fn val_ref(&self) -> &dyn TypedValue {
@@ -176,7 +179,9 @@ impl MutableCell {
         }
 
         match state.inner {
-            MutabilityState::Mutable(_) => { return Ok(()); },
+            MutabilityState::Mutable(_) => {
+                return Ok(());
+            }
             MutabilityState::Shared(..) => (),
         }
 
@@ -205,12 +210,22 @@ impl Mutable for MutableCell {
     }
 
     fn freeze_for_iteration(&self) -> Result<(), ValueError> {
-        self.state.borrow_mut().frozen = true;
-        Ok(())
+        match self.state.try_borrow_mut() {
+            Ok(mut m) => {
+                m.frozen = true;
+                Ok(())
+            }
+            Err(_) => Err(ValueError::IterationDuringMutation),
+        }
     }
 
     fn unfreeze_for_iteration(&self) -> Result<(), ValueError> {
-        self.state.borrow_mut().frozen = false;
-        Ok(())
+        match self.state.try_borrow_mut() {
+            Ok(mut m) => {
+                m.frozen = false;
+                Ok(())
+            }
+            Err(_) => Err(ValueError::IterationDuringMutation),
+        }
     }
 }
