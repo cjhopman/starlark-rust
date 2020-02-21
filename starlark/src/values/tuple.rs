@@ -253,7 +253,7 @@ impl From<Tuple> for Value {
 }
 
 #[derive(Clone, Default)]
-pub struct TupleGen<T : ValueLike> {
+pub struct TupleGen<T: ValueLike> {
     content: Vec<T>,
 }
 
@@ -265,13 +265,29 @@ pub trait TupleLike {
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a>;
 }
 
-impl <T: ValueLike> TupleGen<T> {
+impl<T: ValueLike> TupleGen<T> {
     fn content(&self) -> &Vec<T> {
         &self.content
     }
 }
 
-impl <T: ValueLike> TupleLike for TupleGen<T> {
+pub trait TupleBase {
+    fn content_mut(&mut self) -> &mut Vec<Value>;
+}
+
+impl TupleBase for Tuple {
+    fn content_mut(&mut self) -> &mut Vec<Value> {
+        &mut self.content
+    }
+}
+
+impl TupleBase for FrozenTuple {
+    fn content_mut(&mut self) -> &mut Vec<Value> {
+        panic!()
+    }
+}
+
+impl<T: ValueLike> TupleLike for TupleGen<T> {
     fn len(&self) -> usize {
         self.content.len()
     }
@@ -287,9 +303,11 @@ impl MutableValue for Tuple {
         for v in self.content() {
             frozen.push(v.freeze()?)
         }
-        Ok(FrozenValue::make_immutable(FrozenTuple{content:frozen}))
+        Ok(FrozenValue::make_immutable(FrozenTuple { content: frozen }))
     }
-    fn as_dyn_any_mut(&mut self) -> &mut dyn Any { self }
+    fn as_dyn_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 impl ImmutableValue for FrozenTuple {
@@ -298,7 +316,6 @@ impl ImmutableValue for FrozenTuple {
         Box::new(Tuple { content: vals })
     }
 }
-
 
 pub trait ValueAsTuple {
     fn as_tuple(&self) -> Option<VRef<dyn TupleLike>>;
@@ -325,13 +342,17 @@ impl<T: ValueLike> ValueAsTuple for T {
     }
 }
 
-
-impl<T : ValueLike + 'static> TypedValue for TupleGen<T> {
+impl<T: ValueLike + 'static> TypedValue for TupleGen<T>
+where
+    TupleGen<T>: TupleBase,
+{
     fn naturally_mutable(&self) -> bool {
         true
     }
 
-    fn as_dyn_any(&self) -> &dyn Any { self }
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
+    }
     fn collect_repr(&self, s: &mut String) {
         s.push('(');
         let mut first = true;
@@ -481,6 +502,15 @@ impl<T : ValueLike + 'static> TypedValue for TupleGen<T> {
         }
     }
 
+    fn add_assign(&mut self, other: &Value) -> Result<(), ValueError> {
+        if let Some(other) = other.as_tuple() {
+            self.content_mut().extend(other.iter());
+            Ok(())
+        } else {
+            Err(unsupported!(self, "+=", Some(other)))
+        }
+    }
+
     /// Repeat `other` times this tuple.
     ///
     /// `other` has to be an int or a boolean.
@@ -503,7 +533,9 @@ impl<T : ValueLike + 'static> TypedValue for TupleGen<T> {
                     content: Vec::new(),
                 };
                 for _i in 0..*l {
-                    result.content.extend(self.content.iter().map(|e| e.clone_value()));
+                    result
+                        .content
+                        .extend(self.content.iter().map(|e| e.clone_value()));
                 }
                 Ok(Value::new_mutable(result))
             }
@@ -512,7 +544,7 @@ impl<T : ValueLike + 'static> TypedValue for TupleGen<T> {
     }
 }
 
-impl <T: ValueLike + 'static> TypedIterable for TupleGen<T> {
+impl<T: ValueLike + 'static> TypedIterable for TupleGen<T> {
     fn to_iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
         TupleLike::iter(self)
     }
