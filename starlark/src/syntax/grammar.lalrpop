@@ -63,7 +63,7 @@ build_file_: Statement = "\n"* <(<BuildTopStmt> "\n"+)*>
     => Statement::Statements(<>);
 
 TopStmt: AstStatement = { DefStmt, SimpleStmt<BuildTopStmt> };
-BuildTopStmt: AstStatement = { AssignStmt, ExprStmt, LoadStmt };
+BuildTopStmt: AstStatement = { AssignStmt, ExprStmt, LoadStmt, LoadSymbolsStmt };
 
 DefStmt: AstStatement = ASTS<DefStmt_>;
 DefStmt_: Statement =
@@ -157,6 +157,11 @@ LoadStmtBindingName: AstString = <identifier> "=";
 
 LoadStmtSyms: (AstString, AstString) = <id:LoadStmtBindingName?> <n:string>
     => (id.unwrap_or(n.clone()), n);
+
+
+LoadSymbolsStmt: AstStatement = ASTS<LoadSymbolsStmt_>;
+LoadSymbolsStmt_: Statement = "load_symbols" "(" <e:Expr> ")"
+    => Statement::LoadSymbols(<>);
 
 // Expression
 L<E>: AstExpr = <l:@L> <v:(<E> ",")*> <e:E> <f:","?> <r:@R>
@@ -357,6 +362,7 @@ extern {
       "and" => lexer::Token::And,
       "else" => lexer::Token::Else,
       "load" => lexer::Token::Load,
+      "load_symbols" => lexer::Token::LoadSymbols,
       "break" => lexer::Token::Break,
       "for" => lexer::Token::For,
       "not" => lexer::Token::Not,

@@ -95,21 +95,22 @@ pub enum Token {
     Dedent,  // Leaving an indentation block
     Newline, // Newline outside a string
     // Keywords
-    And,      // "and" keyword
-    Else,     // "else" keyword
-    Load,     // "load" keyword
-    Break,    // "break" keyword
-    For,      // "for" keyword
-    Not,      // "not" keyword
-    NotIn,    // "not in" keyword (taken as keyword)
-    Continue, // "continue" keyword
-    If,       // "if" keyword
-    Or,       // "or" keyword
-    Def,      // "def" keyword
-    In,       // "in" keyword
-    Pass,     // "pass" keyword
-    Elif,     // "elif" keyword
-    Return,   // "return" keyword
+    And,         // "and" keyword
+    Else,        // "else" keyword
+    Load,        // "load" keyword
+    LoadSymbols, // "load_symbols" keyword
+    Break,       // "break" keyword
+    For,         // "for" keyword
+    Not,         // "not" keyword
+    NotIn,       // "not in" keyword (taken as keyword)
+    Continue,    // "continue" keyword
+    If,          // "if" keyword
+    Or,          // "or" keyword
+    Def,         // "def" keyword
+    In,          // "in" keyword
+    Pass,        // "pass" keyword
+    Elif,        // "elif" keyword
+    Return,      // "return" keyword
     // Symbols
     Comma,            // ','
     Semicolon,        // ';'
@@ -159,6 +160,7 @@ impl fmt::Display for Token {
             Token::And => write!(f, "keyword 'and'"),
             Token::Else => write!(f, "keyword 'else'"),
             Token::Load => write!(f, "keyword 'load'"),
+            Token::LoadSymbols => write!(f, "keyword 'load_symbols'"),
             Token::Break => write!(f, "keyword 'break'"),
             Token::For => write!(f, "keyword 'for'"),
             Token::Not => write!(f, "keyword 'not'"),
@@ -482,6 +484,7 @@ impl Lexer {
             "and" => Token::And,
             "else" => Token::Else,
             "load" => Token::Load,
+            "load_symbols" => Token::LoadSymbols,
             "break" => Token::Break,
             "for" => Token::For,
             "not" => Token::Not,
@@ -819,8 +822,10 @@ impl Lexer {
                 x if x == quote => {
                     self.pop();
                     if triple {
-                        if self.next_char() == quote {
-                            if self.next_char() == quote {
+                        if self.peek_char() == quote {
+                            self.pop();
+                            if self.peek_char() == quote {
+                                self.pop();
                                 break;
                             } else {
                                 res.push(quote);

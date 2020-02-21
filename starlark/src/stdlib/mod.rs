@@ -13,6 +13,9 @@
 // limitations under the License.
 
 //! A module with the standard function and constants that are by default in all dialect of Starlark
+
+#![allow(redundant_semicolon)]
+
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter};
 use std;
@@ -21,15 +24,15 @@ use std::error::Error;
 use std::num::NonZeroI64;
 use std::sync;
 
-use crate::environment::{Environment, LocalEnvironment, GlobalEnvironmentBuilder, TypeValues};
+use crate::environment::{Environment, GlobalEnvironmentBuilder, LocalEnvironment, TypeValues};
 use crate::eval::noload::eval;
 use crate::syntax::dialect::Dialect;
 use crate::values::dict::Dictionary;
+use crate::values::dict::*;
 use crate::values::function::WrappedMethod;
 use crate::values::none::NoneType;
 use crate::values::range::Range;
 use crate::values::selector::*;
-use crate::values::dict::*;
 use crate::values::*;
 
 // Errors -- CR = Critical Runtime
@@ -365,7 +368,7 @@ starlark_module! {global_functions =>
     /// getattr("banana", "split")("a") == ["b", "n", "n", ""] # equivalent to "banana".split("a")
     /// # "#).unwrap());
     /// ```
-    getattr(env env, #a, #attr: String, #default = NoneType::None) {
+    getattr(env env, #a, #attr: String, ?default) {
         match a.get_attr(&attr) {
             Ok(v) => Ok(v),
             x => match env.get_type_value(a.get_type(), &attr) {
@@ -375,7 +378,10 @@ starlark_module! {global_functions =>
                 } else {
                     Ok(v)
                 }
-                None => if default.get_type() == "NoneType" { x } else { Ok(default) }
+                None => match default {
+                    None => x,
+                    Some(v) => Ok(v),
+                }
             }
         }
     }
@@ -947,9 +953,8 @@ starlark_module! {global_functions =>
     /// ```
     zip(*args) {
         let mut v = Vec::new();
-
+        let mut first = true;
         for arg in args {
-            let first = v.is_empty();
             let mut idx = 0;
             for e in &arg.iter()? {
                 if first {
@@ -961,6 +966,7 @@ starlark_module! {global_functions =>
                 }
             }
             v.truncate(idx);
+            first = false;
         }
         Ok(Value::from(v))
     }
@@ -975,9 +981,7 @@ pub fn global_environment() -> GlobalEnvironmentBuilder {
     env.set("None", Value::new(NoneType::None)).unwrap();
     env.set("True", Value::new(true)).unwrap();
     env.set("False", Value::new(false)).unwrap();
-    dict::global(list::global(string::global(
-        global_functions(env),
-    )))
+    dict::global(list::global(string::global(global_functions(env))))
 }
 
 /// Default global environment with added non-standard `struct` and `set` extensions.

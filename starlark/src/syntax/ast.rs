@@ -18,7 +18,7 @@ use super::lexer;
 use crate::eval::compr::ComprehensionCompiled;
 use crate::eval::def::DefCompiled;
 use crate::syntax::dialect::Dialect;
-use crate::values::{Value, FrozenValue};
+use crate::values::{FrozenValue, Value};
 use codemap::{Span, Spanned};
 use codemap_diagnostic::{Diagnostic, Level, SpanLabel, SpanStyle};
 use lalrpop_util;
@@ -559,12 +559,14 @@ impl Expr {
                 Expr::DictComprehension((key, value), clauses) => Expr::ComprehensionCompiled(
                     ComprehensionCompiled::new_dict(key, value, clauses)?,
                 ),
-                Expr::Literal(AstLiteral::StringLiteral(s)) => {
-                    Expr::CompiledLiteral(AstLiteral::StringLiteral(s.clone()), Value::new(s.node).freeze().unwrap())
-                }
-                Expr::Literal(AstLiteral::IntLiteral(i)) => {
-                    Expr::CompiledLiteral(AstLiteral::IntLiteral(i), Value::new(i.node).freeze().unwrap())
-                }
+                Expr::Literal(AstLiteral::StringLiteral(s)) => Expr::CompiledLiteral(
+                    AstLiteral::StringLiteral(s.clone()),
+                    Value::new(s.node).freeze().unwrap(),
+                ),
+                Expr::Literal(AstLiteral::IntLiteral(i)) => Expr::CompiledLiteral(
+                    AstLiteral::IntLiteral(i),
+                    Value::new(i.node).freeze().unwrap(),
+                ),
                 Expr::Literal(AstLiteral::ListLiteral(_)) => unreachable!(),
                 Expr::CompiledLiteral(..) => unreachable!(),
                 Expr::ComprehensionCompiled(..) => unreachable!(),
@@ -633,6 +635,7 @@ pub enum Statement {
     /// Post-processed `def` statement
     DefCompiled(DefCompiled),
     Load(AstString, Vec<(AstString, AstString)>),
+    LoadSymbols(AstExpr),
 }
 to_ast_trait!(Statement, AstStatement, Box);
 
@@ -763,7 +766,8 @@ impl Statement {
             | Statement::Expression(..)
             | Statement::Pass
             | Statement::Assign(..)
-            | Statement::Load(..) => {
+            | Statement::Load(..)
+            | Statement::LoadSymbols(..) => {
                 // These statements do not contain nested statements
                 Ok(())
             }
@@ -802,6 +806,7 @@ impl Statement {
                 Statement::Assign(left, op, right) => {
                     Statement::Assign(Expr::compile(left)?, op, Expr::compile(right)?)
                 }
+                Statement::LoadSymbols(expr) => Statement::LoadSymbols(Expr::compile(expr)?),
                 s @ Statement::Load(..)
                 | s @ Statement::Pass
                 | s @ Statement::Break
@@ -1092,6 +1097,7 @@ impl Statement {
                 )?;
                 f.write_str(")\n")
             }
+            Statement::LoadSymbols(ref expr) => writeln!(f, "{}load_symbols({})", tab, expr.node),
         }
     }
 }

@@ -21,6 +21,7 @@ use crate::small_map::SmallMap;
 use crate::values::error::RuntimeError;
 use crate::values::none::NoneType;
 use crate::{stdlib::macros::param::TryParamConvertFromValue, values::dict::Dictionary};
+use dict::ValueAsDictionary;
 use std::convert::TryInto;
 use std::iter;
 use std::mem;
@@ -303,9 +304,63 @@ pub(crate) fn collect_str(
     collector.push_str(&format!("{}({})", function_type.to_str(), v.join(", ")));
 }
 
+pub struct SlowInvoker {
+    func: Value,
+    pos: Vec<Value>,
+    named: SmallMap<String, Value>,
+    args: Option<Value>,
+    kwargs: Option<Value>,
+}
+
+impl SlowInvoker {
+    pub fn new(func: Value) -> Self {
+        Self {
+            func,
+            pos: Vec::new(),
+            named: SmallMap::new(),
+            args: None,
+            kwargs: None,
+        }
+    }
+
+    pub fn invoke(self, context: &EvaluationContext) -> ValueResult {
+        let mut invoker = self.func.new_invoker()?;
+        for arg in &self.pos {
+            invoker.push_pos(arg.clone());
+        }
+        if let Some(args) = &self.args {
+            invoker.push_args(args.clone());
+        }
+        for (name, arg) in &self.named {
+            invoker.push_named(&name, arg.clone());
+        }
+        if let Some(kwargs) = &self.kwargs {
+            invoker.push_kwargs(kwargs.clone());
+        }
+        invoker.invoke(context)
+    }
+
+    pub fn push_pos(&mut self, v: Value) {
+        self.pos.push(v)
+    }
+
+    pub fn push_args(&mut self, v: Value) {
+        self.args = Some(v);
+    }
+
+    pub fn push_named(&mut self, name: &str, v: Value) {
+        self.named.insert(name.to_owned(), v);
+    }
+
+    pub fn push_kwargs(&mut self, v: Value) {
+        self.kwargs = Some(v);
+    }
+}
+
 pub enum FunctionInvoker<'a> {
     Native(NativeFunctionInvoker<'a>),
     Def(DefInvoker<'a>),
+    Slow(SlowInvoker),
 }
 
 impl<'a> FunctionInvoker<'a> {
@@ -313,6 +368,7 @@ impl<'a> FunctionInvoker<'a> {
         match self {
             FunctionInvoker::Native(inv) => inv.invoke(context),
             FunctionInvoker::Def(inv) => inv.invoke(context),
+            FunctionInvoker::Slow(inv) => inv.invoke(context),
         }
     }
 
@@ -320,6 +376,7 @@ impl<'a> FunctionInvoker<'a> {
         match self {
             FunctionInvoker::Native(ref mut inv) => inv.push_pos(v),
             FunctionInvoker::Def(ref mut inv) => inv.push_pos(v),
+            FunctionInvoker::Slow(ref mut inv) => inv.push_pos(v),
         }
     }
 
@@ -327,6 +384,7 @@ impl<'a> FunctionInvoker<'a> {
         match self {
             FunctionInvoker::Native(ref mut inv) => inv.push_args(v),
             FunctionInvoker::Def(ref mut inv) => inv.push_args(v),
+            FunctionInvoker::Slow(ref mut inv) => inv.push_args(v),
         }
     }
 
@@ -334,6 +392,7 @@ impl<'a> FunctionInvoker<'a> {
         match self {
             FunctionInvoker::Native(ref mut inv) => inv.push_named(name, v),
             FunctionInvoker::Def(ref mut inv) => inv.push_named(name, v),
+            FunctionInvoker::Slow(ref mut inv) => inv.push_named(name, v),
         }
     }
 
@@ -341,6 +400,7 @@ impl<'a> FunctionInvoker<'a> {
         match self {
             FunctionInvoker::Native(ref mut inv) => inv.push_kwargs(v),
             FunctionInvoker::Def(ref mut inv) => inv.push_kwargs(v),
+            FunctionInvoker::Slow(ref mut inv) => inv.push_kwargs(v),
         }
     }
 }
@@ -552,7 +612,9 @@ pub struct NativeFunction<F: Fn(&EvaluationContext, ParameterParser) -> ValueRes
     function_type: FunctionType,
 }
 
-impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + Send + Sync + 'static> NativeFunction<F> {
+impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + Send + Sync + 'static>
+    NativeFunction<F>
+{
     pub fn new(name: String, function: F, signature: Vec<FunctionParameter>) -> Value {
         Value::new(NativeFunction {
             function,
@@ -562,7 +624,10 @@ impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + Send + Sync + '
     }
 }
 
-impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + Send + Sync + 'static>  ImmutableValue for NativeFunction<F> {}
+impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + Send + Sync + 'static>
+    ImmutableValue for NativeFunction<F>
+{
+}
 
 /// Define the function type
 impl<F: Fn(&EvaluationContext, ParameterParser) -> ValueResult + 'static> TypedValue
@@ -604,13 +669,15 @@ pub(crate) struct WrappedMethod {
 }
 
 impl MutableValue for WrappedMethod {
-    fn freeze(&self) -> Result<FrozenValue, ValueError> { unimplemented!() }
-    fn as_dyn_any_mut(&mut self) -> &mut dyn Any { self }
+    fn freeze(&self) -> Result<FrozenValue, ValueError> {
+        unimplemented!()
+    }
+    fn as_dyn_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
-
 impl TypedValue for WrappedMethod {
-
     fn naturally_mutable(&self) -> bool {
         true
     }

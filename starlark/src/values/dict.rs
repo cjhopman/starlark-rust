@@ -30,7 +30,9 @@ impl Dictionary {
     }
 
     pub fn new_typed() -> Dictionary {
-        Dictionary { content: SmallMap::new()}
+        Dictionary {
+            content: SmallMap::new(),
+        }
     }
 
     pub fn new() -> Value {
@@ -102,16 +104,15 @@ impl From<Dictionary> for Value {
 }
 
 impl From<SmallMap<FrozenValue, FrozenValue>> for FrozenValue {
-    fn from(content: SmallMap<FrozenValue, FrozenValue>) -> Self { 
-        FrozenValue::make_immutable(FrozenDictionary{content})
+    fn from(content: SmallMap<FrozenValue, FrozenValue>) -> Self {
+        FrozenValue::make_immutable(FrozenDictionary { content })
     }
 }
-
 
 /// Define the Dictionary type
 
 #[derive(Clone, Default)]
-pub struct DictionaryGen<T : ValueLike> {
+pub struct DictionaryGen<T: ValueLike> {
     content: SmallMap<T, T>,
 }
 
@@ -125,8 +126,11 @@ pub trait DictionaryLike {
     fn items(&self) -> Vec<(Value, Value)>;
 }
 
-impl <T: ValueLike> DictionaryGen<T> {
-    pub fn get<Q>(&self, key: &Q) -> Result<Option<&T>, ValueError> where Q: indexmap::Equivalent<T> + SmallHash{
+impl<T: ValueLike> DictionaryGen<T> {
+    pub fn get<Q>(&self, key: &Q) -> Result<Option<&T>, ValueError>
+    where
+        Q: indexmap::Equivalent<T> + SmallHash,
+    {
         Ok(self.content.get(key))
     }
 }
@@ -136,14 +140,18 @@ pub trait DictionaryMut {
 }
 
 impl DictionaryMut for Dictionary {
-    fn content_mut(&mut self) -> &mut SmallMap<Value, Value> { &mut self.content }
+    fn content_mut(&mut self) -> &mut SmallMap<Value, Value> {
+        &mut self.content
+    }
 }
 
 impl DictionaryMut for FrozenDictionary {
-    fn content_mut(&mut self) -> &mut SmallMap<Value, Value> { panic!() }
+    fn content_mut(&mut self) -> &mut SmallMap<Value, Value> {
+        panic!()
+    }
 }
 
-impl <T: ValueLike> DictionaryLike for DictionaryGen<T> {
+impl<T: ValueLike> DictionaryLike for DictionaryGen<T> {
     fn len(&self) -> usize {
         self.content.len()
     }
@@ -160,7 +168,11 @@ impl <T: ValueLike> DictionaryLike for DictionaryGen<T> {
     }
 
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = (Value, Value)> + 'a> {
-        Box::new(self.content.iter().map(|(l, r)| (l.clone_value(), r.clone_value())))
+        Box::new(
+            self.content
+                .iter()
+                .map(|(l, r)| (l.clone_value(), r.clone_value())),
+        )
     }
 }
 
@@ -173,7 +185,9 @@ impl MutableValue for Dictionary {
         }
         Ok(FrozenValue::from(frozen))
     }
-    fn as_dyn_any_mut(&mut self) -> &mut dyn Any { self }
+    fn as_dyn_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 impl ImmutableValue for FrozenDictionary {
@@ -182,10 +196,9 @@ impl ImmutableValue for FrozenDictionary {
         for (k, v) in &self.content {
             items.insert(k.shared(), v.shared());
         }
-        Box::new(Dictionary{ content: items })
+        Box::new(Dictionary { content: items })
     }
 }
-
 
 pub trait ValueAsDictionary {
     fn as_dict(&self) -> Option<VRef<dyn DictionaryLike>>;
@@ -212,8 +225,11 @@ impl<T: ValueLike> ValueAsDictionary for T {
     }
 }
 
-
-impl<T : ValueLike + 'static> TypedValue for DictionaryGen<T> where Value: indexmap::Equivalent<T>, DictionaryGen<T> : DictionaryMut {
+impl<T: ValueLike + 'static> TypedValue for DictionaryGen<T>
+where
+    Value: indexmap::Equivalent<T>,
+    DictionaryGen<T>: DictionaryMut,
+{
     fn naturally_mutable(&self) -> bool {
         true
     }
@@ -306,6 +322,7 @@ impl<T : ValueLike + 'static> TypedValue for DictionaryGen<T> where Value: index
                 return Ok(());
             }
         }
+        index.get_hash()?;
         self.content_mut().insert(index, new_value);
         Ok(())
     }
@@ -327,7 +344,7 @@ impl<T : ValueLike + 'static> TypedValue for DictionaryGen<T> where Value: index
     }
 }
 
-impl <T: ValueLike + 'static> TypedIterable for DictionaryGen<T> {
+impl<T: ValueLike + 'static> TypedIterable for DictionaryGen<T> {
     fn to_iter<'a>(&'a self) -> Box<dyn Iterator<Item = Value> + 'a> {
         Box::new(self.content.iter().map(|x| x.0.clone_value()))
     }

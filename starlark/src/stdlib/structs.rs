@@ -14,18 +14,24 @@
 
 //! Implementation of `struct` function.
 
+use crate::environment::ModuleRegistry;
 use crate::small_map::SmallMap;
 use crate::values::error::ValueError;
 use crate::values::*;
-use std::{ rc::Rc, any::Any};
+use std::collections::hash_map::DefaultHasher;
+use std::{any::Any, hash::Hasher, rc::Rc};
 
 /// `struct()` implementation.
 
 impl StarlarkStruct {
     pub fn new(fields: SmallMap<String, Value>) -> Self {
-        Self {
-            fields,
-        }
+        Self { fields }
+    }
+}
+
+impl Default for StarlarkStruct {
+    fn default() -> Self {
+        Self::new(SmallMap::new())
     }
 }
 
@@ -43,9 +49,24 @@ pub struct StarlarkStructGen<T: ValueLike> {
 pub type StarlarkStruct = StarlarkStructGen<Value>;
 pub type FrozenStarlarkStruct = StarlarkStructGen<FrozenValue>;
 
-pub trait StarlarkStructLike : TypedValue {
+pub trait StarlarkStructLike: TypedValue {
     fn len(&self) -> usize;
     fn get_field(&self, name: &str) -> Option<Value>;
+}
+
+impl ModuleRegistry for StarlarkStruct {
+    fn set(
+        &mut self,
+        name: &str,
+        value: Value,
+    ) -> Result<(), crate::environment::EnvironmentError> {
+        self.fields.insert(name.to_owned(), value);
+        Ok(())
+    }
+
+    fn add_type_value(&mut self, _obj: &str, _attr: &str, _value: FrozenValue) {
+        unimplemented!("Cannot register type values on a struct.")
+    }
 }
 
 pub trait StarlarkStructMut {
@@ -64,8 +85,13 @@ impl StarlarkStructMut for FrozenStarlarkStruct {
     }
 }
 
-impl<T: ValueLike + 'static> StarlarkStructLike for StarlarkStructGen<T> where StarlarkStructGen<T> : StarlarkStructMut {
-    fn len(&self) -> usize { self.fields.len() }
+impl<T: ValueLike + 'static> StarlarkStructLike for StarlarkStructGen<T>
+where
+    StarlarkStructGen<T>: StarlarkStructMut,
+{
+    fn len(&self) -> usize {
+        self.fields.len()
+    }
     fn get_field(&self, name: &str) -> Option<Value> {
         self.fields.get(name).map(|e| e.clone_value())
     }
@@ -80,7 +106,9 @@ impl MutableValue for StarlarkStruct {
         }
 
         // TODO
-        Ok(FrozenValue::make_immutable(FrozenStarlarkStruct{fields: frozen}))
+        Ok(FrozenValue::make_immutable(FrozenStarlarkStruct {
+            fields: frozen,
+        }))
         /*
         return Ok(FrozenValue::new(StarlarkStruct {
             bound: true,
@@ -88,7 +116,9 @@ impl MutableValue for StarlarkStruct {
         }));
         */
     }
-    fn as_dyn_any_mut(&mut self) -> &mut dyn Any { self }
+    fn as_dyn_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 impl ImmutableValue for FrozenStarlarkStruct {
@@ -97,7 +127,7 @@ impl ImmutableValue for FrozenStarlarkStruct {
         for (k, v) in &self.fields {
             items.insert(k.to_string(), v.shared());
         }
-        Box::new(StarlarkStruct{ fields: items })
+        Box::new(StarlarkStruct { fields: items })
     }
 }
 
@@ -198,6 +228,15 @@ where
                 right: None,
             }),
         }
+    }
+
+    fn get_hash(&self) -> Result<u64, ValueError> {
+        let mut s = DefaultHasher::new();
+        for (k, v) in self.fields.iter() {
+            s.write_u64(k.get_hash()?);
+            s.write_u64(v.get_hash()?);
+        }
+        Ok(s.finish())
     }
 
     fn has_attr(&self, attribute: &str) -> Result<bool, ValueError> {

@@ -120,6 +120,10 @@ impl FrozenEnvironment {
     pub fn child(&self, name: &str) -> LocalEnvironment {
         LocalEnvironment::new_child(name, self.clone())
     }
+
+    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, func: F) {
+        self.env.for_each_var(func);
+    }
 }
 
 impl Environment for FrozenEnvironment {
@@ -160,13 +164,18 @@ pub struct GlobalEnvironment {
     type_objs: TypeValues,
 }
 
+pub trait ModuleRegistry {
+    fn set(&mut self, name: &str, value: Value) -> Result<(), EnvironmentError>;
+    fn add_type_value(&mut self, obj: &str, attr: &str, value: FrozenValue);
+}
+
 pub struct GlobalEnvironmentBuilder {
     env: EnvironmentContent<Value>,
     type_objs: HashMap<String, HashMap<String, FrozenValue>>,
 }
 
 impl GlobalEnvironment {
-    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, mut func: F) {
+    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, func: F) {
         self.env.env.for_each_var(func);
     }
 
@@ -189,7 +198,7 @@ impl GlobalEnvironment {
 }
 
 impl GlobalEnvironmentBuilder {
-    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, mut func: F) {
+    pub fn for_each_var<F: FnMut(&String, &Value)>(&self, func: F) {
         self.env.for_each_var(func);
     }
 
@@ -229,6 +238,17 @@ impl GlobalEnvironmentBuilder {
         let mut dict = HashMap::new();
         dict.insert(attr.to_owned(), value);
         self.type_objs.insert(obj.to_owned(), dict);
+    }
+}
+
+impl ModuleRegistry for GlobalEnvironmentBuilder {
+    fn set(&mut self, name: &str, value: Value) -> Result<(), EnvironmentError> {
+        GlobalEnvironmentBuilder::set(self, name, value)
+    }
+
+    /// Get the object of type `obj_type`, and create it if none exists
+    fn add_type_value(&mut self, obj: &str, attr: &str, value: FrozenValue) {
+        GlobalEnvironmentBuilder::add_type_value(self, obj, attr, value)
     }
 }
 
@@ -342,6 +362,19 @@ impl LocalEnvironment {
             )),
             _ => self.set(new_name, env.get(symbol)?),
         }
+    }
+}
+
+impl ModuleRegistry for LocalEnvironment {
+    fn set(&mut self, name: &str, value: Value) -> Result<(), EnvironmentError> {
+        LocalEnvironment::set(self, name, value)
+    }
+
+    fn add_type_value(&mut self, obj: &str, attr: &str, value: FrozenValue) {
+        panic!(
+            "Cannot add type values to a LocalEnvironment. Tried to add {}.{}",
+            obj, attr
+        )
     }
 }
 

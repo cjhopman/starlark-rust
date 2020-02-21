@@ -338,7 +338,7 @@ macro_rules! starlark_module {
         }
 
         #[doc(hidden)]
-        pub fn $name(mut env: $crate::environment::GlobalEnvironmentBuilder) -> $crate::environment::GlobalEnvironmentBuilder {
+        pub fn $name<T: $crate::environment::ModuleRegistry>(mut env: T) -> T {
             starlark_signatures!{ env,
                 $($t)*
             }

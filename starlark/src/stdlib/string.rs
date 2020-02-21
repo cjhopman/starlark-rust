@@ -14,6 +14,8 @@
 
 //! Methods for the `string` type.
 
+#![allow(redundant_semicolon)]
+
 use crate::values::error::*;
 use crate::values::list::*;
 use crate::values::none::NoneType;
@@ -180,6 +182,22 @@ fn rsplitn_whitespace(s: &str, maxsplit: usize) -> Vec<String> {
     v
 }
 
+struct StringOrTuple(Vec<String>);
+
+impl crate::stdlib::macros::param::TryParamConvertFromValue for StringOrTuple {
+    fn try_from(source: Value) -> Result<Self, ValueError> {
+        if source.get_type() == "string" {
+            Ok(Self(vec![source.to_str()]))
+        } else {
+            let mut r = Vec::new();
+            for item in &source.iter()? {
+                r.push(crate::stdlib::macros::param::TryParamConvertFromValue::try_from(item)?);
+            }
+            Ok(Self(r))
+        }
+    }
+}
+
 starlark_module! {global =>
     /// [string.elems](
     /// https://github.com/google/skylark/blob/3705afa472e466b8b061cce44b47c9ddc6db696d/doc/spec.md#string·elems
@@ -329,9 +347,16 @@ starlark_module! {global =>
     /// "filename.sky".endswith(".sky") == True
     /// # )"#).unwrap());
     /// ```
-    string.endswith(this: String, #suffix: String) {
-        ok!(this.ends_with(suffix.as_str()))
+    string.endswith(this: String, #suffix : StringOrTuple) {
+        for p in suffix.0.iter() {
+            let p : &str = p;
+            if this.ends_with(p) {
+                ok!(true);
+            }
+        }
+        ok!(false)
     }
+
 
     /// [string.find](
     /// https://github.com/google/skylark/blob/3705afa472e466b8b061cce44b47c9ddc6db696d/doc/spec.md#string·find
@@ -443,7 +468,7 @@ starlark_module! {global =>
                 },
                 ('{', "}") => starlark_err!(
                     FORMAT_STRING_UNMATCHED_BRACKET_ERROR_CODE,
-                    "Standalone '}' in format string".to_owned(),
+                    format!("Standalone '}}' in format string `{}`", this),
                     "standalone '}'".to_owned()
                 ),
                 ('{', ..) => starlark_err!(
@@ -467,7 +492,7 @@ starlark_module! {global =>
                 },
                 (.., "}") => starlark_err!(
                     FORMAT_STRING_UNMATCHED_BRACKET_ERROR_CODE,
-                    "Standalone '}' in format string".to_owned(),
+                    format!("Standalone '}}' in format string `{}`", this),
                     "standalone '}'".to_owned()
                 ),
                 _ => capture.push(c)
@@ -476,7 +501,7 @@ starlark_module! {global =>
         match capture.as_str() {
             "}" => starlark_err!(
                 FORMAT_STRING_UNMATCHED_BRACKET_ERROR_CODE,
-                "Standalone '}' in format string".to_owned(),
+                format!("Standalone '}}' in format string `{}`", this),
                 "standalone '}'".to_owned()
             ),
             "" => ok!(result),
@@ -787,7 +812,6 @@ starlark_module! {global =>
     /// ```
     string.join(this: String, #to_join) {
         let mut r = String::new();
-        to_join.as_list().ok_or(ValueError::UnsupportedRecursiveDataStructure)?;
         let to_join_iter = to_join.iter()?;
         for (index, item) in to_join_iter.iter().enumerate() {
             if index != 0 {
@@ -1246,9 +1270,14 @@ starlark_module! {global =>
     /// "filename.sky".startswith("filename") == True
     /// # )"#).unwrap());
     /// ```
-    string.startswith(this: String, #prefix) {
-        check_string!(prefix, startswith);
-        ok!(this.starts_with(prefix.to_str().as_str()))
+    string.startswith(this: String, #prefix : StringOrTuple) {
+        for p in prefix.0.iter() {
+            let p : &str = p;
+            if this.starts_with(p) {
+                ok!(true);
+            }
+        }
+        ok!(false)
     }
 
     /// [string.strip](
@@ -1633,7 +1662,9 @@ mod tests {
 
     #[test]
     fn test_split_codepoints() {
-        starlark_ok!(r#"(list('Hello, 世界'.split_codepoints()) == ['H', 'e', 'l', 'l', 'o', ',', ' ', '世', '界'])"#);
+        starlark_ok!(
+            r#"(list('Hello, 世界'.split_codepoints()) == ['H', 'e', 'l', 'l', 'o', ',', ' ', '世', '界'])"#
+        );
     }
 
     #[test]

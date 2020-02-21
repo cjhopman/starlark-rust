@@ -28,14 +28,14 @@ use crate::values::dict::Dictionary;
 use crate::values::error::ValueError;
 use crate::values::function::*;
 use crate::values::none::NoneType;
-use crate::values::{*};
+use crate::values::*;
 use codemap::{CodeMap, Spanned};
 use codemap_diagnostic::Diagnostic;
-use std::{ any::Any, cell::RefCell};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::iter;
 use std::sync::{Arc, Mutex};
+use std::{any::Any, cell::RefCell};
 
 /// `def` AST with post-processing suitable for faster excecution
 #[doc(hidden)]
@@ -144,7 +144,10 @@ impl DefCompiled {
                 Expr::collect_refs(expr, all_refs);
             }
             Statement::Return(None) | Statement::Break | Statement::Continue | Statement::Pass => {}
-            Statement::Load(..) | Statement::Def(..) | Statement::DefCompiled(..) => unreachable!(),
+            Statement::Load(..)
+            | Statement::LoadSymbols(..)
+            | Statement::Def(..)
+            | Statement::DefCompiled(..) => unreachable!(),
         }
     }
 
@@ -179,9 +182,10 @@ impl DefCompiled {
                     DefCompiled::transform_locals(else_block, locals),
                 ),
                 s @ Statement::Break | s @ Statement::Continue | s @ Statement::Pass => s,
-                Statement::Def(..) | Statement::Load(..) | Statement::DefCompiled(..) => {
-                    unreachable!()
-                }
+                Statement::Def(..)
+                | Statement::Load(..)
+                | Statement::LoadSymbols(..)
+                | Statement::DefCompiled(..) => unreachable!(),
                 Statement::Expression(expr) => {
                     Statement::Expression(Expr::transform_locals_to_slots(expr, locals))
                 }

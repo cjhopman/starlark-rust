@@ -56,6 +56,17 @@ starlark_module! {global =>
         Ok(Value::new(NoneType::None))
     }
 
+    dict.copy(this) {
+        let this = this.as_dict().unwrap();
+        let mut fields = SmallMap::new();
+        for (k, v) in this.iter() {
+            fields.insert(k, v);
+        }
+        Ok(Value::from(Dictionary::from(fields)))
+
+
+    }
+
     /// [dict.get](
     /// https://github.com/google/skylark/blob/3705afa472e466b8b061cce44b47c9ddc6db696d/doc/spec.md#dict·get
     /// ): return an element from the dictionary.

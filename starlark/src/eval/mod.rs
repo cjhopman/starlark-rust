@@ -36,11 +36,12 @@ use crate::values::none::NoneType;
 use crate::values::*;
 use codemap::{CodeMap, Span, Spanned};
 use codemap_diagnostic::{Diagnostic, Level, SpanLabel, SpanStyle};
-use std::{ ops::Deref, cell::RefCell};
+use dict::ValueAsDictionary;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::{cell::RefCell, ops::Deref};
 
 macro_rules! eval_vector {
     ($v:expr, $ctx:expr) => {{
@@ -305,12 +306,12 @@ pub enum CapturedEnv<'a> {
 
 impl<'a> Deref for CapturedEnv<'a> {
     type Target = dyn Environment;
-    fn deref(&self) -> &Self::Target { 
+    fn deref(&self) -> &Self::Target {
         match self {
             CapturedEnv::Frozen(e) => e,
             CapturedEnv::Local(e) => *e,
         }
-     }
+    }
 }
 
 impl<'a> EvaluationContextEnvironment<'a> {
@@ -375,16 +376,19 @@ impl<'a> EvaluationContextEnvironment<'a> {
         }
     }
 
-
     fn find_module(&self, name: &str) -> CapturedEnv {
         match self {
             EvaluationContextEnvironment::Module(env, loader) => {
                 if env.name() == name {
                     CapturedEnv::Local(env)
                 } else {
-                    CapturedEnv::Frozen(loader.find_module(name).expect(&format!("can't find module {} when processing {}", name, env.name())))
+                    CapturedEnv::Frozen(loader.find_module(name).expect(&format!(
+                        "can't find module {} when processing {}",
+                        name,
+                        env.name()
+                    )))
                 }
-            },
+            }
             EvaluationContextEnvironment::Function(env, _, _) => env.find_module(name),
             EvaluationContextEnvironment::Nested(parent, _) => parent.find_module(name),
         }
@@ -451,7 +455,11 @@ impl<'a> EvaluationContext<'a> {
         self.env.find_module(name)
     }
 
-    pub(crate) fn function_context(&'a self, captured_env: CapturedEnv<'a>, locals: IndexedLocals<'a>) -> EvaluationContextEnvironment<'a> {
+    pub(crate) fn function_context(
+        &'a self,
+        captured_env: CapturedEnv<'a>,
+        locals: IndexedLocals<'a>,
+    ) -> EvaluationContextEnvironment<'a> {
         EvaluationContextEnvironment::Function(&self.env, captured_env, locals)
     }
 
@@ -563,7 +571,7 @@ fn eval_call<'a>(
     t(
         match res {
             Err(e) => {
-                // println!("bt: {}", f.to_repr());
+                println!("bt: {}", f.to_repr());
                 Err(e)
             }
             v => v,
@@ -739,9 +747,7 @@ fn eval_expr(expr: &AstExpr, context: &mut EvaluationContext) -> EvalResult {
         }
         Expr::Identifier(ref i) => t(context.env.get(&i.node), i),
         Expr::Slot(slot, ref i) => t(context.env.get_slot(slot, &i.node), i),
-        Expr::CompiledLiteral(_, ref v) => {
-            Ok(v.shared())
-        }
+        Expr::CompiledLiteral(_, ref v) => Ok(v.shared()),
         Expr::Literal(_) => panic!("literals should be compiled at this point: {}", expr.node),
         Expr::Not(ref s) => Ok(Value::new(!eval_expr(s, context)?.to_bool())),
         Expr::Minus(ref s) => t(eval_expr(s, context)?.minus(), expr),
@@ -1026,10 +1032,7 @@ pub fn eval_single_stmt(stmt: &AstStatement, context: &mut EvaluationContext) ->
                     Parameter::Normal(ref n) => FunctionParameter::Normal(n.node.clone()),
                     Parameter::WithDefaultValue(ref n, ref v) => {
                         let mut v = eval_expr(v, context)?;
-                        FunctionParameter::WithDefaultValue(
-                            n.node.clone(),
-                            t(v.freeze(), x)?,
-                        )
+                        FunctionParameter::WithDefaultValue(n.node.clone(), t(v.freeze(), x)?)
                     }
                     Parameter::Args(ref n) => FunctionParameter::ArgsArray(n.node.clone()),
                     Parameter::KWArgs(ref n) => FunctionParameter::KWArgsDict(n.node.clone()),
@@ -1052,15 +1055,18 @@ pub fn eval_single_stmt(stmt: &AstStatement, context: &mut EvaluationContext) ->
             module_env.add_modules(loadenv.get_modules());
             for &(ref new_name, ref orig_name) in v.iter() {
                 t(
-                    module_env.import_symbol(
-                        &loadenv,
-                        &orig_name.node,
-                        &new_name.node,
-                    ),
+                    module_env.import_symbol(&loadenv, &orig_name.node, &new_name.node),
                     &new_name.span.merge(orig_name.span),
                 )?
             }
 
+            Ok(Value::new(NoneType::None))
+        }
+        Statement::LoadSymbols(ref expr) => {
+            let symbols = eval_expr(expr, context)?;
+            for (k, v) in symbols.as_dict().unwrap().iter() {
+                t(context.env.set(&k.to_str(), v.clone()), &*expr)?;
+            }
             Ok(Value::new(NoneType::None))
         }
         _ => unreachable!(),
