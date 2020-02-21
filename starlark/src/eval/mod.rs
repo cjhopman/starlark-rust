@@ -316,7 +316,7 @@ impl<'a> Deref for CapturedEnv<'a> {
 
 impl<'a> EvaluationContextEnvironment<'a> {
     fn make_set(&self, _values: Vec<Value>) -> ValueResult {
-        panic!()
+        Ok(Value::from(NoneType::None))
     }
 
     fn loader(&self) -> Rc<dyn FileLoader> {
