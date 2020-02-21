@@ -36,6 +36,7 @@ pub const INTERPOLATION_VALUE_IS_NOT_CHAR_ERROR_CODE: &str = "CV12";
 pub const TOO_MANY_RECURSION_LEVEL_ERROR_CODE: &str = "CV13";
 pub const UNSUPPORTED_RECURSIVE_DATA_STRUCTURE_ERROR_CODE: &str = "CV14";
 pub const CANNOT_MUTATE_DURING_ITERATION_ERROR_CODE: &str = "CV15";
+pub const CANNOT_ITERATE_DURING_MUTATION_ERROR_CODE: &str = "CV15.1";
 pub const INTEGER_OVERFLOW_ERROR_CODE: &str = "CV16";
 pub const INTERPOLATION_UNEXPECTED_EOF_CLOSING_PAREN: &str = "CV17";
 pub const INTERPOLATION_UNEXPECTED_EOF_PERCENT: &str = "CV18";
@@ -160,6 +161,9 @@ impl SyntaxError for ValueError {
                         ValueError::MutationDuringIteration => {
                             "Cannot mutate an iterable while iterating".to_owned()
                         }
+                        ValueError::IterationDuringMutation => {
+                            "Cannot iterate an iterable while mutating".to_owned()
+                        }
                         ValueError::TypeNotSupported(ref t) => {
                             format!("Attempt to construct unsupported type ({})", t)
                         }
@@ -208,6 +212,9 @@ impl SyntaxError for ValueError {
                         ValueError::MutationDuringIteration => {
                             "This operation mutate an iterable for an iterator is borrowed.".to_owned()
                         }
+                        ValueError::IterationDuringMutation => {
+                            "This operation iterate an iterable while it's borrowed for mutation".to_owned()
+                        }
                         ValueError::TypeNotSupported(ref t) => {
                             format!("Type `{}` is not supported. Perhaps you need to enable some crate feature?", t)
                         }
@@ -237,6 +244,9 @@ impl SyntaxError for ValueError {
                             }
                             ValueError::MutationDuringIteration => {
                                 CANNOT_MUTATE_DURING_ITERATION_ERROR_CODE
+                            }
+                            ValueError::IterationDuringMutation => {
+                                CANNOT_ITERATE_DURING_MUTATION_ERROR_CODE
                             }
                             // handled above
                             ValueError::DiagnosedError(..) | ValueError::StringInterpolation(..) => unreachable!(),
