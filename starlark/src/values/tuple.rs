@@ -407,7 +407,7 @@ where
                 }
             }
         } else {
-            Err(unsupported!(self, "==", Some(other)))
+            Err(unsupported!(self, "==", other.get_type()))
         }
     }
 
@@ -429,7 +429,7 @@ where
                 }
             }
         } else {
-            Err(unsupported!(self, "cmp()", Some(other)))
+            Err(unsupported!(self, "cmp()", other.get_type()))
         }
     }
 
@@ -498,7 +498,7 @@ where
             }
             Ok(result.into())
         } else {
-            Err(unsupported!(self, "a", Some(other)))
+            Err(unsupported!(self, "a", other.get_type()))
         }
     }
 
@@ -507,7 +507,7 @@ where
             self.content_mut().extend(other.iter());
             Ok(())
         } else {
-            Err(unsupported!(self, "+=", Some(other)))
+            Err(unsupported!(self, "+=", other.get_type()))
         }
     }
 

@@ -38,7 +38,7 @@ impl TypedValue for NoneType {
         if let Some(_) = other.downcast_ref::<Self>() {
             Ok(true)
         } else {
-            Err(unsupported!(self, "==", Some(other)))
+            Err(unsupported!(self, "==", other.get_type()))
         }
     }
 
@@ -46,7 +46,7 @@ impl TypedValue for NoneType {
         if let Some(_) = other.downcast_ref::<Self>() {
             Ok(Ordering::Equal)
         } else {
-            Err(unsupported!(self, "cmp()", Some(other)))
+            Err(unsupported!(self, "cmp()", other.get_type()))
         }
     }
 

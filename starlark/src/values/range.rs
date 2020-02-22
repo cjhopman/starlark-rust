@@ -135,7 +135,7 @@ impl TypedValue for Range {
         if let Some(other) = other.downcast_ref::<Self>() {
             self.equals_range(&*other)
         } else {
-            Err(unsupported!(self, "==", Some(other)))
+            Err(unsupported!(self, "==", other.get_type()))
         }
     }
 

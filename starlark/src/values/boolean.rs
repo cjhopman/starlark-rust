@@ -61,7 +61,7 @@ impl TypedValue for bool {
         if let Some(other) = other.downcast_ref::<Self>() {
             Ok(*self == *other)
         } else {
-            Err(unsupported!(self, "==", Some(other)))
+            Err(unsupported!(self, "==", other.get_type()))
         }
     }
 
@@ -69,7 +69,7 @@ impl TypedValue for bool {
         if let Some(other) = other.downcast_ref::<Self>() {
             Ok(self.cmp(&*other))
         } else {
-            Err(unsupported!(self, "<>", Some(other)))
+            Err(unsupported!(self, "<>", other.get_type()))
         }
     }
 }

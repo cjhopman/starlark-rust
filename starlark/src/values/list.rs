@@ -257,10 +257,10 @@ impl<T : ValueLike + 'static> TypedValue for ListGen<T> where ListGen<T> : ListB
     }
 
     fn equals(&self, other: &Value) -> Result<bool, ValueError> {
-        let other = other.as_list();
-        match other {
+        let as_list = other.as_list();
+        match as_list {
             None => {
-                return Err(unsupported!(self, "==", Some(other)));
+                return Err(unsupported!(self, "==", other.get_type()));
             }
             Some(ref other) => {
                 if self.content().len() != other.len() {
@@ -303,7 +303,7 @@ impl<T : ValueLike + 'static> TypedValue for ListGen<T> where ListGen<T> : ListB
                 }
             }
         } else {
-            Err(unsupported!(self, "cmp()", Some(other)))
+            Err(unsupported!(self, "cmp()", other.get_type()))
         }
     }
 
@@ -370,7 +370,7 @@ impl<T : ValueLike + 'static> TypedValue for ListGen<T> where ListGen<T> : ListB
             }
             Ok(Value::from(result))
         } else {
-            Err(unsupported!(self, "+", Some(other)))
+            Err(unsupported!(self, "+", other.get_type()))
         }
     }
 
@@ -379,7 +379,7 @@ impl<T : ValueLike + 'static> TypedValue for ListGen<T> where ListGen<T> : ListB
             self.content_mut().extend(other.iter());
             Ok(())
         } else {
-            Err(unsupported!(self, "+=", Some(other)))
+            Err(unsupported!(self, "+=", other.get_type()))
         }
     }
 

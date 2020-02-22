@@ -292,7 +292,7 @@ where
 
             return Ok(true);
         }
-        Err(unsupported!(self, "==", Some(other)))
+        Err(unsupported!(self, "==", other.get_type()))
     }
 
     fn at(&self, index: Value) -> ValueResult {
@@ -340,7 +340,7 @@ where
             }
             return Ok(Value::from(result));
         }
-        Err(unsupported!(self, "+", Some(other)))
+        Err(unsupported!(self, "+", other.get_type()))
     }
 }
 

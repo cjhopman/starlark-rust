@@ -216,7 +216,7 @@ where
             return Ok(true);
         }
 
-        Err(unsupported!(self, "==", Some(other)))
+        Err(unsupported!(self, "==", other.get_type()))
     }
 
     fn get_attr(&self, attribute: &str) -> Result<Value, ValueError> {

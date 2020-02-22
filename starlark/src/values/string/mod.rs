@@ -27,7 +27,9 @@ use std::iter;
 impl ImmutableValue for String {}
 
 impl TypedValue for String {
-    fn as_dyn_any(&self) -> &dyn Any { self }
+    fn as_dyn_any(&self) -> &dyn Any {
+        self
+    }
     fn find_in<'a>(&'_ self, map: &'a SmallMap<String, Value>) -> Option<&'a Value> {
         map.get(self)
     }
@@ -67,7 +69,7 @@ impl TypedValue for String {
         if let Some(other) = other.downcast_ref::<Self>() {
             Ok(*self == *other)
         } else {
-            Err(unsupported!(self, "==", Some(other)))
+            Err(unsupported!(self, "==", other.get_type()))
         }
     }
 
@@ -75,7 +77,7 @@ impl TypedValue for String {
         if let Some(other) = other.downcast_ref::<Self>() {
             Ok(self.cmp(&other))
         } else {
-            Err(unsupported!(self, "cmp()", Some(other)))
+            Err(unsupported!(self, "cmp()", other.get_type()))
         }
     }
 
@@ -164,7 +166,7 @@ impl TypedValue for String {
             let s: String = self.chars().chain(other.chars()).collect();
             Ok(Value::from(s))
         } else {
-            Err(unsupported!(self, "+", Some(other)))
+            Err(unsupported!(self, "+", other.get_type()))
         }
     }
 
@@ -173,7 +175,7 @@ impl TypedValue for String {
             *self += &**other;
             Ok(())
         } else {
-            Err(unsupported!(self, "+=", Some(other)))
+            Err(unsupported!(self, "+=", other.get_type()))
         }
     }
 

@@ -248,7 +248,7 @@ impl TypedValue for Set {
             }
             return Ok(Value::new_mutable(result));
         }
-        Err(unsupported!(self, "+", Some(other)))
+        Err(unsupported!(self, "+", other.get_type()))
     }
 
     fn get_hash(&self) -> Result<u64, ValueError> {

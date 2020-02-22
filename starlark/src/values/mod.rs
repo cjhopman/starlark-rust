@@ -439,6 +439,7 @@ macro_rules! unsupported {
             right: Some($o.to_owned()),
         }
     };
+    
     ($v:expr, $op:expr) => {
         ValueError::OperationNotSupported {
             op: $op.to_owned(),

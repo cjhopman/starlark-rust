@@ -70,7 +70,7 @@ where
 {
     match right.downcast_ref::<i64>() {
         Some(right) => Ok(Value::new(f(left, *right)?)),
-        None => Err(unsupported!(&left, op, Some(&right))),
+        None => Err(unsupported!(&left, op, right.get_type())),
     }
 }
 
@@ -90,7 +90,7 @@ impl TypedValue for i64 {
         if let Some(other) = other.downcast_ref::<i64>() {
             Ok(*self == *other)
         } else {
-            Err(unsupported!(self, "==", Some(&*other)))
+            Err(unsupported!(self, "==", other.get_type()))
         }
     }
 
@@ -124,7 +124,7 @@ impl TypedValue for i64 {
                 .map(Value::from)
                 .ok_or(ValueError::IntegerOverflow)
         } else {
-            Err(unsupported!(self, "+", Some(other)))
+            Err(unsupported!(self, "+", other.get_type()))
         }
     }
     fn sub(&self, other: &Value) -> Result<Value, ValueError> {
@@ -133,7 +133,7 @@ impl TypedValue for i64 {
                 .map(Value::from)
                 .ok_or(ValueError::IntegerOverflow)
         } else {
-            Err(unsupported!(self, "-", Some(other)))
+            Err(unsupported!(self, "-", other.get_type()))
         }
     }
     fn mul(&self, other: Value) -> ValueResult {
@@ -183,7 +183,7 @@ impl TypedValue for i64 {
         if let Some(other) = other.downcast_ref::<Self>() {
             Ok(self.cmp(&*other))
         } else {
-            Err(unsupported!(self, "==", Some(other)))
+            Err(unsupported!(self, "==", other.get_type()))
         }
     }
 }
