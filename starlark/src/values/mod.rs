@@ -179,7 +179,9 @@ impl FrozenValue {
         match &self.0 {
             FrozenInner::Object(o) => {
                 if o.naturally_mutable() {
-                    Value(LocalInner::Mutable(Rc::new(MutableCell::new_shared(o.clone()))))
+                    Value(LocalInner::Mutable(Rc::new(MutableCell::new_shared(
+                        o.clone(),
+                    ))))
                 } else {
                     self.clone().into()
                 }
@@ -434,6 +436,14 @@ macro_rules! unsupported {
             op: $op.to_owned(),
             left: $v.get_type().to_owned(),
             // TODO
+            right: Some($o.to_owned()),
+        }
+    };
+    ($v:expr, $op:expr) => {
+        ValueError::OperationNotSupported {
+            op: $op.to_owned(),
+            left: $v.get_type().to_owned(),
+            // TODO
             right: None,
         }
     };
@@ -525,7 +535,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// Convert self to a integer value, as returned by the int() function if the type is numeric
     /// (not for string).
     fn to_int(&self) -> Result<i64, ValueError> {
-        Err(unsupported!(self, "int()", None))
+        Err(unsupported!(self, "int()"))
     }
 
     /// Return a hash code for self, as returned by the hash() function, or
@@ -544,7 +554,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// so implementation should avoid returning errors except for
     //  unrecoverable runtime errors.
     fn equals(&self, other: &Value) -> Result<bool, ValueError> {
-        Err(unsupported!(self, "==", Some(other)))
+        Err(unsupported!(self, "==", other.get_type()))
     }
 
     /// Compare `self` with `other`.
@@ -558,7 +568,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// __Note__: This does not use the [`PartialOrd`] trait as
     ///       the trait needs to know the actual type of the value we compare.
     fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
-        Err(unsupported!(self, "compare", Some(other)))
+        Err(unsupported!(self, "compare", other.get_type()))
     }
 
     /// Perform a call on the object, only meaningfull for function object.
@@ -576,14 +586,14 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// * args: if provided, the `*args` argument.
     /// * kwargs: if provided, the `**kwargs` argument.
     fn new_invoker(&self) -> Result<FunctionInvoker, ValueError> {
-        Err(unsupported!(self, "call()", None))
+        Err(unsupported!(self, "call()"))
     }
 
     /// Perform an array or dictionary indirection.
     ///
     /// This returns the result of `a[index]` if `a` is indexable.
     fn at(&self, index: Value) -> ValueResult {
-        Err(unsupported!(self, "[]", Some(index)))
+        Err(unsupported!(self, "[]", index.get_type()))
     }
 
     /// Set the value at `index` with `new_value`.
@@ -592,7 +602,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// frozen (but with `ValueError::OperationNotSupported` if the operation is not supported
     /// on this value, even if the value is immutable, e.g. for numbers).
     fn set_at(&mut self, index: Value, _new_value: Value) -> Result<(), ValueError> {
-        Err(unsupported!(self, "[]=", Some(index)))
+        Err(unsupported!(self, "[]=", index.get_type()))
     }
 
     /// Extract a slice of the underlying object if the object is indexable. The result will be
@@ -642,18 +652,18 @@ pub trait TypedValue: 'static + AsTypedValue {
         _stop: Option<Value>,
         _stride: Option<Value>,
     ) -> ValueResult {
-        Err(unsupported!(self, "[::]", None))
+        Err(unsupported!(self, "[::]"))
     }
 
     /// Returns an iterable over the value of this container if this value hold an iterable
     /// container.
     fn iter(&self) -> Result<&dyn TypedIterable, ValueError> {
-        Err(unsupported!(self, "(iter)", None))
+        Err(unsupported!(self, "(iter)"))
     }
 
     /// Returns the length of the value, if this value is a sequence.
     fn length(&self) -> Result<i64, ValueError> {
-        Err(unsupported!(self, "len()", None))
+        Err(unsupported!(self, "len()"))
     }
 
     /// Get an attribute for the current value as would be returned by dotted expression (i.e.
@@ -667,8 +677,8 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// Return true if an attribute of name `attribute` exists for the current value.
     ///
     /// __Note__: this does not handle native methods which are handled through universe.
-    fn has_attr(&self, _attribute: &str) -> Result<bool, ValueError> {
-        Err(unsupported!(self, "has_attr()", None))
+    fn has_attr(&self, attribute: &str) -> Result<bool, ValueError> {
+        Err(unsupported!(self, "has_attr()", attribute))
     }
 
     /// Set the attribute named `attribute` of the current value to `new_value` (e.g.
@@ -679,13 +689,13 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// if the operation is not supported on this value, even if the self is immutable,
     /// e.g. for numbers).
     fn set_attr(&mut self, attribute: &str, _new_value: Value) -> Result<(), ValueError> {
-        Err(unsupported!(self, ".{}=", None))
+        Err(unsupported!(self, ".{}=", attribute))
     }
 
     /// Return a vector of string listing all attribute of the current value, excluding native
     /// methods.
     fn dir_attr(&self) -> Result<Vec<String>, ValueError> {
-        Err(unsupported!(self, "dir()", None))
+        Err(unsupported!(self, "dir()"))
     }
 
     /// Tell wether `other` is in the current value, if it is a container.
@@ -705,7 +715,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// assert!(!Value::from("abc").is_in(&Value::from("z")).unwrap().to_bool());
     /// ```
     fn is_in(&self, other: &Value) -> Result<bool, ValueError> {
-        Err(unsupported!(other, "in", Some(self)))
+        Err(unsupported!(other, "in", self.get_type()))
     }
 
     /// Apply the `+` unary operator to the current value.
@@ -720,7 +730,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// # }
     /// ```
     fn plus(&self) -> Result<Value, ValueError> {
-        Err(unsupported!(self, "+", None))
+        Err(unsupported!(self, "+"))
     }
 
     /// Apply the `-` unary operator to the current value.
@@ -735,7 +745,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// # }
     /// ```
     fn minus(&self) -> Result<Value, ValueError> {
-        Err(unsupported!(self, "-", None))
+        Err(unsupported!(self, "-"))
     }
 
     /// Add `other` to the current value.
@@ -750,11 +760,11 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// # }
     /// ```
     fn add(&self, other: &Value) -> Result<Value, ValueError> {
-        Err(unsupported!(self, "+", Some(other)))
+        Err(unsupported!(self, "+", other.get_type()))
     }
 
     fn add_assign(&mut self, other: &Value) -> Result<(), ValueError> {
-        Err(unsupported!(self, "+=", Some(other)))
+        Err(unsupported!(self, "+=", other.get_type()))
     }
 
     /// Substract `other` from the current value.
@@ -769,7 +779,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// # }
     /// ```
     fn sub(&self, other: &Value) -> Result<Value, ValueError> {
-        Err(unsupported!(self, "-", Some(other)))
+        Err(unsupported!(self, "-", other.get_type()))
     }
 
     /// Multiply the current value with `other`.
@@ -784,7 +794,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// # }
     /// ```
     fn mul(&self, other: Value) -> ValueResult {
-        Err(unsupported!(self, "*", Some(other)))
+        Err(unsupported!(self, "*", other.get_type()))
     }
 
     /// Apply the percent operator between the current value and `other`.
@@ -803,7 +813,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// # }
     /// ```
     fn percent(&self, other: Value) -> ValueResult {
-        Err(unsupported!(self, "%", Some(other)))
+        Err(unsupported!(self, "%", other.get_type()))
     }
 
     /// Divide the current value with `other`.  division.
@@ -818,7 +828,7 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// # }
     /// ```
     fn div(&self, other: Value) -> ValueResult {
-        Err(unsupported!(self, "/", Some(other)))
+        Err(unsupported!(self, "/", other.get_type()))
     }
 
     /// Floor division between the current value and `other`.
@@ -833,14 +843,14 @@ pub trait TypedValue: 'static + AsTypedValue {
     /// # }
     /// ```
     fn floor_div(&self, other: Value) -> ValueResult {
-        Err(unsupported!(self, "//", Some(other)))
+        Err(unsupported!(self, "//", other.get_type()))
     }
 
     /// Apply the operator pipe to the current value and `other`.
     ///
     /// This is usually the union on set.
     fn pipe(&self, other: Value) -> ValueResult {
-        Err(unsupported!(self, "|", Some(other)))
+        Err(unsupported!(self, "|", other.get_type()))
     }
 }
 
@@ -1268,13 +1278,13 @@ pub mod list;
 pub mod mutability;
 pub mod none;
 pub mod range;
+pub mod selector;
 pub mod string;
 pub mod tuple;
-pub mod selector;
 
 use crate::values::mutability::RefOrRef;
-use crate::values::selector::*;
 use crate::values::none::NoneType;
+use crate::values::selector::*;
 
 #[cfg(test)]
 mod tests {
