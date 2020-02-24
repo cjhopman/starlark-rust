@@ -728,6 +728,17 @@ fn transform(
 
 // Evaluate the AST element, i.e. mutate the environment and return an evaluation result
 fn eval_expr(expr: &AstExpr, context: &mut EvaluationContext) -> EvalResult {
+    match eval_expr_inner(expr, context) {
+        Err(e) => {
+            println!("ex {}", expr.node);
+            Err(e)
+        },
+        v => v
+    }
+}
+
+
+fn eval_expr_inner(expr: &AstExpr, context: &mut EvaluationContext) -> EvalResult {
     // println!("ex {}", expr.node);
     match expr.node {
         Expr::Tuple(ref v) => {

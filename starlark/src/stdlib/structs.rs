@@ -18,6 +18,8 @@ use crate::environment::ModuleRegistry;
 use crate::small_map::SmallMap;
 use crate::values::error::ValueError;
 use crate::values::*;
+use itertools::Itertools;
+use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::{any::Any, hash::Hasher, rc::Rc};
 
@@ -52,6 +54,7 @@ pub type FrozenStarlarkStruct = StarlarkStructGen<FrozenValue>;
 pub trait StarlarkStructLike: TypedValue {
     fn len(&self) -> usize;
     fn get_field(&self, name: &str) -> Option<Value>;
+    fn sorted_keys(&self) -> Vec<&String>;
 }
 
 impl ModuleRegistry for StarlarkStruct {
@@ -94,6 +97,9 @@ where
     }
     fn get_field(&self, name: &str) -> Option<Value> {
         self.fields.get(name).map(|e| e.clone_value())
+    }
+    fn sorted_keys(&self) -> Vec<&String> {
+        self.fields.keys().sorted().collect()
     }
 }
 
@@ -217,6 +223,40 @@ where
         }
 
         Err(unsupported!(self, "==", other.get_type()))
+    }
+
+    fn compare(&self, other: &Value) -> Result<Ordering, ValueError> {
+        if let Some(ref other) = other.as_struct() {
+            match self.fields.len().cmp(&other.len()) {
+                Ordering::Equal => {}
+                v => return Ok(v),
+            }
+            let self_keys = self.sorted_keys();
+            let other_keys = other.sorted_keys();
+
+            for (left, right) in itertools::zip(self_keys.iter(), other_keys.iter()) {
+                let (left, right): (&str, &str) = (left, right);
+                match left.cmp(right) {
+                    Ordering::Equal => {
+                        let left_val = self.fields.get(left).unwrap();
+                        let right_val = other.get_field(right).unwrap();
+                        match left_val.compare(&right_val)? {
+                            Ordering::Equal => {}
+                            v => {
+                                return Ok(v);
+                            }
+                        }
+                    }
+                    v => {
+                        return Ok(v);
+                    }
+                }
+            }
+
+            return Ok(Ordering::Equal);
+        }
+
+        Err(unsupported!(self, "<", other.get_type()))
     }
 
     fn get_attr(&self, attribute: &str) -> Result<Value, ValueError> {
